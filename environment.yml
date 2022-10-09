@@ -1,0 +1,10 @@
+name: twentyfive
+channels:
+  - defaults
+dependencies:
+  - python>=3.9
+  - pip>=22.2
+  - pip:
+    - build>=0.8.0
+    - pycarddeck>=1.4.0
+#prefix: /home/<user>/anaconda3/envs/twentyfive
