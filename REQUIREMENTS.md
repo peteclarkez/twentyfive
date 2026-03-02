@@ -229,8 +229,11 @@ must show a history of all tricks played so far in the round, not just the curre
 ### 5.7 Autoplay
 
 **UI-14** In master view mode, the player must have the option to auto-play the current
-player's first legal move (rapid advance for testing). This must be accessible as a numbered
-option in the move selection list.
+player's move (rapid advance for testing). The auto-play strategy must be: (1) if any legal
+card would make this player the current trick winner, play the weakest such card (highest `#N`
+rank); otherwise (2) play the weakest legal card overall (highest `#N` rank). This preserves
+stronger cards while still advancing the game. The option must be accessible via the `[A]`
+input in the card selection prompt.
 
 ### 5.8 Renege Indicator
 

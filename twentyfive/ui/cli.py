@@ -254,13 +254,17 @@ class CLI:
                 f"    [{i}] {_colour_card(card, state.trump_suit)}"
                 f"{plus_tag}{minus_tag}{renege_tag}{rank_tag}"
             )
-        print("    [A] Auto-play (first legal card)")
+        print("    [A] Auto-play (worst winning card, or worst card)")
         print()
 
         n = len(legal_cards)
         result = self._get_card_input(f"  Play card (1-{n} or A): ", n)
         if isinstance(result, str):
-            return PlayCard(card=legal_cards[0])
+            if winners:
+                auto_card = max(winners, key=lambda c: ranks[c])
+            else:
+                auto_card = max(legal_cards, key=lambda c: ranks[c])
+            return PlayCard(card=auto_card)
         return PlayCard(card=legal_cards[result - 1])
 
     # ------------------------------------------------------------------
