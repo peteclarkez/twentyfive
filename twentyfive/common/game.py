@@ -6,7 +6,6 @@ from twentyfive.common.table import Table
 
 
 class Game:
-
     def __init__(self, table):
 
         self.table = table
@@ -14,13 +13,13 @@ class Game:
         self.table.getDeck().shuffle()
         print("Deck Shuffled")
 
-    def dealCards(self,number):
+    def dealCards(self, number):
         """
         Dealer will go through all available players and deal them x number of cards.
 
         :param number:  How many cards to deal
         :type number:   int
-        """    
+        """
         for player in self.table.getPlayers():
             for _ in range(0, number):
                 deck = self.table.getDeck()

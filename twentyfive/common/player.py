@@ -1,6 +1,4 @@
-
 class Player:
-
     def __init__(self, name: str):
         self.hand = []
         self.name = name
@@ -8,15 +6,14 @@ class Player:
     def __str__(self):
         return self.name
 
-    def pickup(self,card):
+    def pickup(self, card):
         self.hand.append(card)
 
-    def putdown(self,card):
+    def putdown(self, card):
         self.hand.remove(card)
 
     def printHand(self):
         print("Player {} is holding [ ".format(self.name))
-        for card in self.hand:                        
+        for card in self.hand:
             print("   {} ".format(card))
         print("]\n")
-        
