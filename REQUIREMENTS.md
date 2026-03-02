@@ -85,8 +85,10 @@ player may rob the pack (see [RULES.md — Robbing the Trump](RULES.md)).
 **GAME-7** Eligibility: a player holding the Ace of the trump suit may rob. If the face-up
 card is itself the Ace of the trump suit, the dealer may rob.
 **GAME-8** Robbing is optional — no player is compelled to rob.
-**GAME-9** To rob, a player takes the face-up card and discards exactly one card from their
-hand face-down. The discard is not revealed to other players.
+**GAME-9** To rob, a player first discards exactly one card from their current hand face-down,
+then takes the face-up card. The player may not discard the face-up card itself (they choose
+their discard from their original hand before taking). The discard is not revealed to other
+players.
 **GAME-10** Robbing opportunities are resolved in seat order (starting from the player
 immediately left of the dealer). Only one rob per face-up card is possible.
 **GAME-11** The engine must not allow trick play to begin until the rob phase is complete
@@ -101,12 +103,12 @@ each trick leads the next.
 
 #### Move Validation — Non-Trump Lead
 
-**GAME-15** When a non-trump card leads, a player must either follow suit (play a card of
-the led suit) or trump (play any trump card, including A♥).
-**GAME-16** A player may play an off-suit non-trump card only if they hold neither the led
-suit nor any trump (they are void in both). See [RULES.md — Non-Trump Lead](RULES.md).
-**GAME-17** A player is never forced to follow suit if they hold trumps — they may always
-trump instead (the "may trump" rule).
+**GAME-15** When a non-trump card leads, a player must follow suit or trump (may-trump rule)
+— they must play a card of the same suit as the led card, or any trump card. They may not
+freely discard a card of a different suit while holding either the led suit or a trump.
+**GAME-16** A player who holds no card of the led suit and no trump may play any card.
+**GAME-17** May-trump is permitted: a player holding the led suit may still choose to trump
+instead of following suit. They are never required to trump.
 
 #### Move Validation — Trump Lead
 
@@ -204,9 +206,70 @@ running totals) must be shown before the next round begins.
 **UI-10** When a player reaches 25 points, the game must display the winner and final scores,
 then exit cleanly.
 
+### 5.5 Colour and Readability
+
+**UI-11** Card suits must be rendered in colour using ANSI terminal codes:
+Hearts → red, Spades → green, Diamonds → orange (256-color), Clubs → navy (blue).
+
+### 5.6 Trick Visibility
+
+**UI-12** The current trick display must indicate which player led the trick (played the
+first card of the trick).
+**UI-13** Completed tricks from the current round must remain visible on screen. The display
+must show a history of all tricks played so far in the round, not just the current one.
+
+### 5.7 Autoplay
+
+**UI-14** In master view mode, the player must have the option to auto-play the current
+player's first legal move (rapid advance for testing). This must be accessible as a numbered
+option in the move selection list.
+
+### 5.8 Renege Indicator
+
+**UI-15** When a player is selecting a card to play and a legal move would constitute a
+renege (legally withholding a top-3 trump while other trumps are forced), the UI must mark
+that card visually (e.g. with a `(renege)` label) so the player can make an informed choice.
+
+### 5.9 Game Identity in UI
+
+**UI-16** The game header must display the current game ID, round number, and trick number
+on every screen so players can reference specific scenarios in the audit log.
+
 ---
 
-## 6. Non-Functional Requirements
+## 6. Audit Log
+
+**AUD-1** Every player decision (rob choice, card played) must be recorded as a structured
+audit event immediately after it is applied to the game state.
+
+**AUD-2** Each audit event must include at minimum:
+- `game_id` — unique identifier for the game (UUID)
+- `timestamp` — ISO 8601 wall-clock time of the event
+- `round_number`, `trick_number`
+- `player_name`, `player_index`
+- `event_type` — one of `deal`, `trump`, `rob`, `pass_rob`, `play_card`
+- `card` — the card involved (where applicable)
+- `legal_moves` — the full set of legal moves available to the player at decision time
+
+**AUD-3** A `deal` event must be emitted at the start of each round recording the full
+initial hand for every player and the face-up trump card, so the game can be replayed in
+full from the log alone.
+
+**AUD-4** Audit data must be written in newline-delimited JSON (one JSON object per line, no
+trailing comma) to a file in the `logs/` directory. The filename must incorporate the game
+ID and start timestamp: `logs/game_<id>_<YYYYMMDD_HHMMSS>.jsonl`.
+
+**AUD-5** The `logs/` directory must be listed in `.gitignore`.
+
+**AUD-6** Each event must be flushed to disk immediately after being written (append mode,
+explicit flush) so partial logs are recoverable if the process is interrupted.
+
+**AUD-7** The audit subsystem must live in the game layer (not the UI layer) so that it
+captures all decisions regardless of which UI is used.
+
+---
+
+## 7. Non-Functional Requirements
 
 **NFR-1** Python 3.12 or later.
 **NFR-2** No external card or game libraries. All card and game logic must be implemented
@@ -219,10 +282,12 @@ the game and card layers.
 **NFR-6** Code must pass `ruff format` and `ruff check` (configuration in `pyproject.toml`)
 with no errors or warnings.
 **NFR-7** The project must be runnable with `python -m twentyfive` from the project root.
+**NFR-8** The audit log must use only the Python standard library (`json`, `uuid`,
+`datetime`, `pathlib`). No third-party logging frameworks.
 
 ---
 
-## 7. Out of Scope
+## 8. Out of Scope
 
 The following are explicitly deferred to later phases. They should not be designed against
 in the MVP, but the architecture must not actively prevent them.
@@ -234,12 +299,11 @@ in the MVP, but the architecture must not actively prevent them.
 | GUI (web, desktop, or otherwise) | Phase 4 |
 | 45s and 110 variants | Phase 3+ |
 | Network / online play | Phase 4+ |
-| Persistent game history or saved state | Phase 2+ |
 | Normal (hidden-hand) pass-the-terminal mode | Phase 1b |
 
 ---
 
-## 8. Open Questions
+## 9. Open Questions
 
 Issues that may affect requirements as development proceeds. Update this section as
 decisions are made.

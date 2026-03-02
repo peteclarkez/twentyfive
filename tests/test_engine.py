@@ -23,7 +23,7 @@ def make_engine(n: int = 3, seed: int = 42) -> GameEngine:
     """Create an engine with n players using a fixed random seed."""
     random.seed(seed)
     names = [f"P{i+1}" for i in range(n)]
-    return GameEngine(player_names=names)
+    return GameEngine(player_names=names, audit_dir=None)
 
 
 def play_all_legal(engine: GameEngine, *, max_moves: int = 500) -> None:
@@ -53,15 +53,15 @@ def skip_rob_phase(engine: GameEngine) -> None:
 class TestEngineConstruction:
     def test_requires_at_least_two_players(self) -> None:
         with pytest.raises(ValueError):
-            GameEngine(["Solo"])
+            GameEngine(["Solo"], audit_dir=None)
 
     def test_requires_at_most_six_players(self) -> None:
         with pytest.raises(ValueError):
-            GameEngine([f"P{i}" for i in range(7)])
+            GameEngine([f"P{i}" for i in range(7)], audit_dir=None)
 
     def test_rejects_duplicate_names(self) -> None:
         with pytest.raises(ValueError):
-            GameEngine(["Alice", "Alice", "Bob"])
+            GameEngine(["Alice", "Alice", "Bob"], audit_dir=None)
 
     def test_initial_deal_gives_five_cards_each(self) -> None:
         engine = make_engine(3)
@@ -118,7 +118,7 @@ class TestRobPhase:
         """
         for seed in range(200):
             random.seed(seed)
-            engine = GameEngine(["A", "B", "C"])
+            engine = GameEngine(["A", "B", "C"], audit_dir=None)
             state = engine.get_state()
             if state.phase == Phase.ROB:
                 return engine, state.current_player_index
@@ -319,26 +319,26 @@ class TestGameOver:
     def test_game_ends_before_25_moves_total(self) -> None:
         """A game must end; auto-play never gets stuck."""
         random.seed(0)
-        engine = GameEngine(["Alice", "Bob", "Carol"])
+        engine = GameEngine(["Alice", "Bob", "Carol"], audit_dir=None)
         play_all_legal(engine, max_moves=1000)
         assert engine.is_game_over
 
     def test_game_over_phase_has_no_legal_moves(self) -> None:
         random.seed(0)
-        engine = GameEngine(["Alice", "Bob"])
+        engine = GameEngine(["Alice", "Bob"], audit_dir=None)
         play_all_legal(engine, max_moves=1000)
         assert engine.get_state().legal_moves == ()
 
     def test_apply_move_raises_when_game_over(self) -> None:
         random.seed(0)
-        engine = GameEngine(["Alice", "Bob"])
+        engine = GameEngine(["Alice", "Bob"], audit_dir=None)
         play_all_legal(engine, max_moves=1000)
         with pytest.raises(ValueError):
             engine.apply_move(PassRob())
 
     def test_winner_has_score_at_least_25(self) -> None:
         random.seed(0)
-        engine = GameEngine(["Alice", "Bob", "Carol"])
+        engine = GameEngine(["Alice", "Bob", "Carol"], audit_dir=None)
         play_all_legal(engine, max_moves=1000)
         state = engine.get_state()
         scores = [p.score for p in state.players]
@@ -348,7 +348,7 @@ class TestGameOver:
         """Run several games with different seeds to catch edge cases."""
         for seed in range(10):
             random.seed(seed)
-            engine = GameEngine(["X", "Y", "Z"])
+            engine = GameEngine(["X", "Y", "Z"], audit_dir=None)
             play_all_legal(engine, max_moves=2000)
             assert engine.is_game_over, f"Game with seed {seed} did not end"
 

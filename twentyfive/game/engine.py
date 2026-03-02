@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
+
 from twentyfive.cards.card import Card, Rank, Suit
 from twentyfive.cards.deck import Deck
+from twentyfive.game.audit import GameAudit
 from twentyfive.game.player import Player
 from twentyfive.game.rules import get_legal_cards, get_legal_rob_moves, trick_winner
 from twentyfive.game.state import (
@@ -24,12 +28,18 @@ class GameEngine:
         is_game_over     — True once a player has reached 25 points
     """
 
-    def __init__(self, player_names: list[str]) -> None:
+    def __init__(
+        self,
+        player_names: list[str],
+        *,
+        audit_dir: Path | None = Path("logs"),
+    ) -> None:
         if not 2 <= len(player_names) <= 6:
             raise ValueError(f"Twenty-Five requires 2–6 players, got {len(player_names)}")
         if len(set(player_names)) != len(player_names):
             raise ValueError("Player names must be unique")
 
+        self._game_id: str = str(uuid.uuid4())
         self._players: list[Player] = [Player(name=n) for n in player_names]
         self._dealer_index: int = 0
         self._round_number: int = 1
@@ -40,10 +50,24 @@ class GameEngine:
         self._phase: Phase = Phase.ROB
         self._current_player_index: int = 0
         self._current_trick: list[TrickPlay] = []
+        self._completed_tricks_this_round: list[tuple[TrickPlay, ...]] = []
         self._trick_number: int = 1
         self._rob_queue: list[int] = []  # indices of players still to act in rob phase
 
+        self._audit: GameAudit | None = (
+            GameAudit(self._game_id, audit_dir) if audit_dir is not None else None
+        )
+
         self._start_round()
+
+        if self._audit:
+            self._audit.record_deal(
+                self._players,
+                self._round_number,
+                self._dealer_index,
+                self._trump_suit.name,
+                self._face_up_card,
+            )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -61,8 +85,10 @@ class GameEngine:
             trump_suit=self._trump_suit,
             face_up_card=self._face_up_card,
             current_trick=tuple(self._current_trick),
+            completed_tricks=tuple(self._completed_tricks_this_round),
             trick_number=self._trick_number,
             round_number=self._round_number,
+            game_id=self._game_id,
             legal_moves=legal,
         )
 
@@ -75,6 +101,12 @@ class GameEngine:
         if move not in legal:
             raise ValueError(f"Illegal move {move!r}. Legal moves: {legal}")
 
+        # Capture pre-move context for audit
+        pre_round = self._round_number
+        pre_trick = self._trick_number
+        player = self._players[self._current_player_index]
+        player_idx = self._current_player_index
+
         match self._phase:
             case Phase.ROB:
                 self._apply_rob_move(move)
@@ -82,6 +114,20 @@ class GameEngine:
                 self._apply_trick_move(move)
             case Phase.GAME_OVER:
                 raise ValueError("Game is over; no moves can be applied")
+
+        if self._audit:
+            self._audit.record_move(
+                pre_round, pre_trick, player.name, player_idx, move, legal
+            )
+            # If a new round started, emit the deal event for it
+            if self._round_number != pre_round and self._phase != Phase.GAME_OVER:
+                self._audit.record_deal(
+                    self._players,
+                    self._round_number,
+                    self._dealer_index,
+                    self._trump_suit.name,
+                    self._face_up_card,
+                )
 
     @property
     def is_game_over(self) -> bool:
@@ -93,6 +139,8 @@ class GameEngine:
 
     def _start_round(self) -> None:
         """Shuffle, deal, turn up trump, compute rob queue, set phase."""
+        self._completed_tricks_this_round = []
+
         for player in self._players:
             player.clear_hand()
             player.reset_round_stats()
@@ -174,8 +222,8 @@ class GameEngine:
         player = self._players[self._current_player_index]
 
         if isinstance(move, Rob):
-            player.add_card(self._face_up_card)
             player.remove_card(move.discard)
+            player.add_card(self._face_up_card)
             self._face_up_card = None
             # Only one rob per round — clear remaining queue
             self._rob_queue.clear()
@@ -219,6 +267,9 @@ class GameEngine:
         winner = self._players[winner_idx]
         winner.score += 5
         winner.tricks_won_this_round += 1
+
+        # Save the completed trick before clearing
+        self._completed_tricks_this_round.append(tuple(self._current_trick))
 
         # Win condition: first to 25 (GAME-28 — checked after every trick)
         if winner.score >= 25:

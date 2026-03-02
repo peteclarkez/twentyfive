@@ -68,12 +68,14 @@ Ireland's national card game. A trick-taking game where the first player to reac
 Before the first trick is led, a player holding the **Ace of the trump suit** may **rob** the face-up trump card:
 
 1. Declare the rob (must happen before the first card is led)
-2. Take the face-up card into your hand
-3. Discard any one card from your hand face-down
+2. Discard any one card from your **current hand** face-down
+3. Take the face-up card into your hand
 
 **Special case:** If the face-up card IS the Ace of trumps, the **dealer** may rob it instead.
 
 Robbing is **optional** — no player is required to rob.
+
+> You may not discard the face-up card — you must choose your discard from your hand before taking it.
 
 > If trump is hearts and the face-up card is the A♥, the dealer may rob (A♥ is the Ace of the trump suit).
 
@@ -81,17 +83,13 @@ Robbing is **optional** — no player is required to rob.
 
 ## Playing a Trick
 
-### Non-Trump Lead ("May Trump" Rule)
+### Non-Trump Lead
 
-When a non-trump card leads the trick, each player must:
-- **Follow suit** (play a card of the same suit), **OR**
-- **Trump** (play any trump card, including A♥)
+When a non-trump card leads the trick, each player must **follow suit or trump** — they must play a card of the same suit as the led card, or a trump card. They may **not freely discard** a card of a different suit if they hold either the led suit or any trump.
 
-A player may only play an **off-suit non-trump card** if they hold **neither** the led suit **nor** any trump.
+A player who holds **no card of the led suit and no trump** may play any card in their hand.
 
-> Key rule: players are never forced to follow suit if they prefer to trump. But they cannot discard a random card while holding the led suit or any trump.
-
-> If a player holds **neither** the led suit **nor** any trump, they may play **any card** — they are not forced to trump.
+> Note: The Ace of Hearts, while always a trump for trick-winning purposes, carries the suit Hearts. A player holding A♥ may use it to follow suit when a hearts card leads. It also counts as a trump for the may-trump option.
 
 ### Trump Lead
 
@@ -140,7 +138,6 @@ The first player to reach **25 points** wins the game. Victory is checked immedi
 | **Five fingers** | The 5 of trumps — highest card in the game |
 | **Rob / Robbing** | Exchanging a card for the face-up trump card (requires holding Ace of trumps) |
 | **Renege** | Legally withholding a top-3 trump card when trump is led |
-| **Prod** | Playing a trump card when a non-trump suit was led |
+| **Prod** | Playing a trump card when a non-trump suit was led (legal whether or not you hold the led suit — may-trump rule) |
 | **Trick / Lift** | One round of play where each player plays one card |
 | **Lead** | The first card played in a trick, which sets the led suit |
-| **May trump** | The rule that permits trumping even when you can follow suit |

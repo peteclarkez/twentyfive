@@ -9,6 +9,7 @@ from twentyfive.cards.card import ACE_OF_HEARTS, Card, Rank, Suit
 from twentyfive.game.rules import (
     get_legal_cards,
     get_legal_rob_moves,
+    get_renegeable_cards,
     non_trump_rank,
     trick_winner,
     trump_rank,
@@ -211,8 +212,8 @@ class TestGetLegalCardsLead:
 
 
 class TestGetLegalCardsNonTrumpLead:
-    def test_must_follow_suit_or_trump(self) -> None:
-        # Led: 3♥ (hearts non-trump), trump: clubs
+    def test_must_follow_suit_or_may_trump(self) -> None:
+        # Led: 3♥ (hearts non-trump), trump: clubs — K♥ follows suit; A♣ is trump (may-trump)
         hand = [
             Card(Rank.KING, Suit.HEARTS),
             Card(Rank.ACE, Suit.CLUBS),
@@ -220,45 +221,54 @@ class TestGetLegalCardsNonTrumpLead:
         ]
         led = Card(Rank.THREE, Suit.HEARTS)
         legal = get_legal_cards(hand, led, Suit.CLUBS)
+        # May-trump: K♥ (follows suit) and A♣ (trump) both legal; Q♦ (neither) is not
         assert set(legal) == {Card(Rank.KING, Suit.HEARTS), Card(Rank.ACE, Suit.CLUBS)}
 
-    def test_ace_of_hearts_counts_as_trump_option(self) -> None:
-        # Led: 3♦ (diamonds non-trump), trump: clubs — A♥ is trump
+    def test_void_in_led_suit_any_card_legal(self) -> None:
+        # Led: 3♦ (diamonds non-trump), trump: clubs — void in diamonds → any card legal
         hand = [ACE_OF_HEARTS, Card(Rank.QUEEN, Suit.SPADES)]
         led = Card(Rank.THREE, Suit.DIAMONDS)
         legal = get_legal_cards(hand, led, Suit.CLUBS)
-        assert ACE_OF_HEARTS in legal
-        assert Card(Rank.QUEEN, Suit.SPADES) not in legal
+        # Void in led suit → any card legal (trumping is optional)
+        assert set(legal) == set(hand)
 
-    def test_void_in_both_led_suit_and_trump_plays_freely(self) -> None:
+    def test_void_in_led_suit_plays_freely(self) -> None:
         # Led: 3♥ (hearts non-trump), trump: clubs — hand has only diamonds
         hand = [Card(Rank.KING, Suit.DIAMONDS), Card(Rank.TWO, Suit.DIAMONDS)]
         led = Card(Rank.THREE, Suit.HEARTS)
         legal = get_legal_cards(hand, led, Suit.CLUBS)
         assert set(legal) == set(hand)
 
-    def test_may_trump_even_with_led_suit_in_hand(self) -> None:
-        # Player holds both led suit and trumps — both are legal (may trump rule)
+    def test_may_trump_when_holding_led_suit_and_trump(self) -> None:
+        # Player holds both led suit and a trump — both are legal (may-trump rule)
         hand = [Card(Rank.KING, Suit.HEARTS), Card(Rank.TWO, Suit.CLUBS)]
         led = Card(Rank.THREE, Suit.HEARTS)
         legal = get_legal_cards(hand, led, Suit.CLUBS)
-        assert set(legal) == set(hand)
+        # May-trump: K♥ (follows suit) and 2♣ (trump) both legal
+        assert set(legal) == {Card(Rank.KING, Suit.HEARTS), Card(Rank.TWO, Suit.CLUBS)}
 
-    def test_only_trump_in_hand_when_non_trump_led(self) -> None:
-        # Hand has only trumps — all are legal (must follow suit or trump, trump satisfies)
+    def test_void_in_led_suit_trump_is_optional(self) -> None:
+        # Hand has only trumps, void in led suit — all cards legal (trump not forced)
         hand = [Card(Rank.TWO, Suit.CLUBS), Card(Rank.KING, Suit.CLUBS)]
         led = Card(Rank.THREE, Suit.HEARTS)
         legal = get_legal_cards(hand, led, Suit.CLUBS)
         assert set(legal) == set(hand)
 
-    def test_ace_of_hearts_non_trump_led_but_no_led_suit(self) -> None:
-        # Led: 3♦ (diamonds non-trump, trump: clubs) — hand has A♥ and spades
-        # A♥ is trump so it's a legal option; spades are discards only if also no led suit
+    def test_ace_of_hearts_follows_suit_when_hearts_led(self) -> None:
+        # Led: 3♥ (non-trump, clubs trump) — A♥ has suit hearts, counts as following suit
+        hand = [ACE_OF_HEARTS, Card(Rank.KING, Suit.SPADES)]
+        led = Card(Rank.THREE, Suit.HEARTS)
+        legal = get_legal_cards(hand, led, Suit.CLUBS)
+        # A♥ is hearts-suited → follows suit. K♠ is neither → not legal.
+        assert set(legal) == {ACE_OF_HEARTS}
+
+    def test_void_in_non_hearts_led_suit_ace_of_hearts_optional(self) -> None:
+        # Led: 3♦ (diamonds non-trump, clubs trump) — void in diamonds → any card legal
         hand = [ACE_OF_HEARTS, Card(Rank.KING, Suit.SPADES)]
         led = Card(Rank.THREE, Suit.DIAMONDS)
         legal = get_legal_cards(hand, led, Suit.CLUBS)
-        # A♥ is trump → legal. K♠ is neither led suit nor trump → not legal
-        assert set(legal) == {ACE_OF_HEARTS}
+        # Void in diamonds → all cards legal; A♥ is optional, not forced
+        assert set(legal) == set(hand)
 
 
 # ---------------------------------------------------------------------------
@@ -322,15 +332,14 @@ class TestGetLegalCardsTrumpLead:
         assert set(legal) == set(hand)
 
     def test_lower_trump_leads_higher_trump_must_be_played(self) -> None:
-        # Q♣ leads (rank 9); hand has K♣ (rank 10, forced) and a non-trump
+        # Q♣ leads (rank 9); hand has K♣ (rank 10) and a non-trump
         trump = Suit.CLUBS
         hand = [Card(Rank.KING, trump), Card(Rank.FIVE, Suit.HEARTS)]
         led = Card(Rank.QUEEN, trump)
         legal = get_legal_cards(hand, led, trump)
-        # K♣ rank 10 > 9... wait, rank 10 (King) and led rank 9 (Queen)
-        # forced = cards with trump_rank <= 9. K♣ has rank 10 > 9 → renegeable
-        # So forced = [] → any card is legal
-        assert set(legal) == set(hand)
+        # K♣ is not in top-3, so it is FORCED even though its rank (10) > led rank (9).
+        # forced = [K♣] → must play trump → legal = {K♣} only
+        assert set(legal) == {Card(Rank.KING, trump)}
 
     def test_ace_of_hearts_in_hand_trump_led_non_hearts_suit(self) -> None:
         # A♥ is trump when clubs is trump; a trump lead forces it unless it's renegeable
@@ -340,6 +349,75 @@ class TestGetLegalCardsTrumpLead:
         # A♥ trump_rank = 12 > 9 → renegeable. forced = []. Legal = all cards.
         legal = get_legal_cards(hand, led, trump)
         assert set(legal) == set(hand)
+
+
+# ---------------------------------------------------------------------------
+# get_renegeable_cards
+# ---------------------------------------------------------------------------
+
+
+class TestGetRenegeable:
+    def test_no_led_card_returns_empty(self) -> None:
+        hand = [Card(Rank.FIVE, Suit.CLUBS), Card(Rank.JACK, Suit.CLUBS)]
+        assert get_renegeable_cards(hand, None, Suit.CLUBS) == frozenset()
+
+    def test_non_trump_led_returns_empty(self) -> None:
+        hand = [Card(Rank.FIVE, Suit.CLUBS), Card(Rank.JACK, Suit.CLUBS)]
+        led = Card(Rank.KING, Suit.HEARTS)
+        assert get_renegeable_cards(hand, led, Suit.CLUBS) == frozenset()
+
+    def test_forced_only_returns_empty(self) -> None:
+        # Led J♣ (rank 13); hand has only K♣ (rank 10) — forced, nothing renegeable
+        trump = Suit.CLUBS
+        hand = [Card(Rank.KING, trump)]
+        led = Card(Rank.JACK, trump)
+        assert get_renegeable_cards(hand, led, trump) == frozenset()
+
+    def test_mixed_forced_and_renegeable(self) -> None:
+        # Led K♣ (rank 10); 5♣ (rank 14) renegeable, Q♣ (rank 9) forced
+        trump = Suit.CLUBS
+        five = Card(Rank.FIVE, trump)
+        queen = Card(Rank.QUEEN, trump)
+        hand = [five, queen]
+        led = Card(Rank.KING, trump)  # rank 10
+        result = get_renegeable_cards(hand, led, trump)
+        assert result == frozenset({five})
+
+    def test_top3_renegeable_non_top3_is_not(self) -> None:
+        # Led 8♦ (rank 6); player has 5♦(14), J♦(13), 9♦(7) — all outrank led trump
+        # Bug case from game be2fc7ce R2T1: only top-3 cards (5♦, J♦) are renegeable;
+        # 9♦ outranks led but is NOT top-3 so it is forced, not renegeable.
+        trump = Suit.DIAMONDS
+        five = Card(Rank.FIVE, trump)
+        jack = Card(Rank.JACK, trump)
+        nine = Card(Rank.NINE, trump)
+        hand = [five, jack, nine, Card(Rank.NINE, Suit.CLUBS), Card(Rank.EIGHT, Suit.HEARTS)]
+        led = Card(Rank.EIGHT, trump)  # rank 6
+        result = get_renegeable_cards(hand, led, trump)
+        assert result == frozenset({five, jack})
+
+    def test_five_leads_nothing_renegeable(self) -> None:
+        # 5♣ (rank 14) is the highest trump — nothing outranks it
+        trump = Suit.CLUBS
+        hand = [Card(Rank.JACK, trump), ACE_OF_HEARTS, Card(Rank.KING, trump)]
+        led = Card(Rank.FIVE, trump)
+        assert get_renegeable_cards(hand, led, trump) == frozenset()
+
+    def test_non_top3_trump_is_forced_even_when_above_led(self) -> None:
+        # Exact bug scenario: 8♦ led (rank 6), player has 5♦(14), J♦(13), 9♦(7)
+        # 9♦ outranks 8♦ by rank, but is NOT top-3 → forced.
+        # legal = all trumps {5♦, J♦, 9♦}; renege labels only on {5♦, J♦}
+        trump = Suit.DIAMONDS
+        five = Card(Rank.FIVE, trump)
+        jack = Card(Rank.JACK, trump)
+        nine = Card(Rank.NINE, trump)
+        other = Card(Rank.NINE, Suit.CLUBS)
+        hand = [five, jack, nine, other]
+        led = Card(Rank.EIGHT, trump)  # rank 6
+        # Legal: nine is forced → must play trump → all trumps available
+        assert set(get_legal_cards(hand, led, trump)) == {five, jack, nine}
+        # Renege labels: only top-3 cards that outrank led
+        assert get_renegeable_cards(hand, led, trump) == frozenset({five, jack})
 
 
 # ---------------------------------------------------------------------------
@@ -354,9 +432,9 @@ class TestGetLegalRobMoves:
         hand = [Card(Rank.ACE, trump), Card(Rank.QUEEN, Suit.HEARTS)]
         moves = get_legal_rob_moves(hand, face_up, trump, is_dealer=False)
         assert PassRob() in moves
-        # Should include Rob options for all cards in hand + face_up_card
+        # Discard options are from current hand only (not the face-up card)
         rob_discards = {m.discard for m in moves if isinstance(m, Rob)}
-        assert rob_discards == set(hand + [face_up])
+        assert rob_discards == set(hand)
 
     def test_non_dealer_without_ace_of_trump_is_not_eligible(self) -> None:
         trump = Suit.CLUBS
@@ -371,8 +449,9 @@ class TestGetLegalRobMoves:
         hand = [Card(Rank.KING, Suit.HEARTS), Card(Rank.TWO, Suit.DIAMONDS)]
         moves = get_legal_rob_moves(hand, face_up, trump, is_dealer=True)
         assert PassRob() in moves
+        # Discard from current hand only — cannot discard the ace you are taking
         rob_discards = {m.discard for m in moves if isinstance(m, Rob)}
-        assert rob_discards == set(hand + [face_up])
+        assert rob_discards == set(hand)
 
     def test_dealer_not_eligible_when_face_up_is_not_ace(self) -> None:
         trump = Suit.CLUBS
@@ -389,13 +468,13 @@ class TestGetLegalRobMoves:
         moves = get_legal_rob_moves(hand, face_up, trump, is_dealer=True)
         assert any(isinstance(m, Rob) for m in moves)
 
-    def test_rob_discard_includes_face_up_card(self) -> None:
-        # Player may discard the card they just took (take K♣, then discard K♣)
+    def test_rob_discard_excludes_face_up_card(self) -> None:
+        # Player discards from their hand BEFORE taking; cannot discard the face-up card
         trump = Suit.CLUBS
         face_up = Card(Rank.KING, trump)
         hand = [Card(Rank.ACE, trump), Card(Rank.QUEEN, Suit.HEARTS)]
         moves = get_legal_rob_moves(hand, face_up, trump, is_dealer=False)
-        assert Rob(discard=face_up) in moves
+        assert Rob(discard=face_up) not in moves
 
 
 # ---------------------------------------------------------------------------

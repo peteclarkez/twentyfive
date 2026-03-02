@@ -134,32 +134,42 @@ def get_legal_cards(
 
     led_card=None means this player is leading the trick (all cards legal).
 
-    Non-trump lead:
-        Must follow suit OR trump. If void in both, any card is legal.
+    Non-trump lead (may-trump rule):
+        Player may follow suit OR play a trump. Cannot freely discard if they hold
+        the led suit or any trump. If void in both, any card is legal.
 
     Trump lead:
-        "Forced" trumps are those that do NOT outrank the led trump — they must be played
-        if held. If the player has at least one forced trump, all their trumps are legal
-        (renegeable top-3 may be played voluntarily). If the player has only renegeable
-        trumps (or none), any card is legal.
+        Only the top-3 cards (5 of trumps, Jack of trumps, A♥) that outrank the led trump
+        are renegeable (may be withheld). All other trumps — including those whose rank
+        exceeds the led trump — are forced. If any forced trump exists, all trumps in hand
+        are legal (renegeable top-3 may be played voluntarily). If the player holds only
+        renegeable top-3 trumps (or no trumps), any card is legal.
     """
     if led_card is None:
         return list(hand)
 
     if not is_trump(led_card, trump_suit):
-        # Non-trump lead: follow suit or trump
-        candidates = [c for c in hand if c.suit == led_card.suit or is_trump(c, trump_suit)]
-        return candidates if candidates else list(hand)
+        # May-trump rule: player may follow suit OR play any trump (but cannot freely
+        # discard if they hold the led suit or any trump). If void in both, any card legal.
+        led_suit_cards = [c for c in hand if c.suit == led_card.suit]
+        if led_suit_cards:
+            return [c for c in hand if c.suit == led_card.suit or is_trump(c, trump_suit)]
+        else:
+            return list(hand)
 
-    # Trump lead
+    # Trump lead: only the top-3 (5, Jack, A♥) that outrank the led trump may be reneged.
+    # Every other trump — even one that outranks the led trump by rank — is forced.
     led_rank = trump_rank(led_card, trump_suit)
-    # Forced = trumps that don't outrank the led card (cannot be reneged)
-    forced = [c for c in hand if is_trump(c, trump_suit) and trump_rank(c, trump_suit) <= led_rank]
+    top_3 = {Card(Rank.FIVE, trump_suit), Card(Rank.JACK, trump_suit), ACE_OF_HEARTS}
+    forced = [
+        c for c in hand
+        if is_trump(c, trump_suit) and (c not in top_3 or trump_rank(c, trump_suit) <= led_rank)
+    ]
     if forced:
-        # Must play a trump; renegeable top-3 are optional extras
+        # Must play a trump; renegeable top-3 may still be played voluntarily
         return [c for c in hand if is_trump(c, trump_suit)]
     else:
-        # Player has only renegeable top-3 trumps, or no trumps — any card is legal
+        # Player holds only renegeable top-3 trumps (or no trumps) — any card is legal
         return list(hand)
 
 
@@ -176,8 +186,11 @@ def get_legal_rob_moves(
     - Non-dealer: holds the Ace of the trump suit.
     - Dealer: the face-up card IS the Ace of the trump suit.
 
-    If eligible: [PassRob()] + [Rob(discard=c) for every card in hand + face_up_card].
+    If eligible: [PassRob()] + [Rob(discard=c) for every card in hand].
     If not eligible: [PassRob()] — the engine will auto-advance past this player.
+
+    The player discards from their current hand BEFORE taking the face-up card;
+    discarding the face-up card back is not permitted.
     """
     ace_of_trump = Card(Rank.ACE, trump_suit)
 
@@ -189,10 +202,42 @@ def get_legal_rob_moves(
     if not eligible:
         return [PassRob()]
 
-    # After robbing, the player holds hand + face_up_card (6 cards) and discards one.
-    # Any card from that augmented hand is a legal discard.
-    possible_discards = hand + [face_up_card]
-    return [PassRob()] + [Rob(discard=c) for c in possible_discards]
+    # The player discards from their current hand BEFORE taking the face-up card.
+    # The face-up card cannot be chosen as the discard.
+    return [PassRob()] + [Rob(discard=c) for c in hand]
+
+
+# ---------------------------------------------------------------------------
+# Renege helper
+# ---------------------------------------------------------------------------
+
+
+def get_renegeable_cards(
+    hand: list[Card],
+    led_card: Card | None,
+    trump_suit: Suit,
+) -> frozenset[Card]:
+    """
+    Return the set of trump cards in hand that the player is *permitted* to renege
+    (withhold) on a trump lead.
+
+    Only the top-3 protected cards — 5 of trumps, Jack of trumps, A♥ — may ever be
+    reneged, and only when they outrank the led trump. All other trumps are always forced.
+
+    Returns an empty frozenset when:
+      - there is no led card (player is leading)
+      - the led card is not a trump
+      - the player has no top-3 trumps that outrank the led trump
+    """
+    if led_card is None or not is_trump(led_card, trump_suit):
+        return frozenset()
+
+    led_rank = trump_rank(led_card, trump_suit)
+    top_3 = {Card(Rank.FIVE, trump_suit), Card(Rank.JACK, trump_suit), ACE_OF_HEARTS}
+    return frozenset(
+        c for c in hand
+        if c in top_3 and is_trump(c, trump_suit) and trump_rank(c, trump_suit) > led_rank
+    )
 
 
 # ---------------------------------------------------------------------------

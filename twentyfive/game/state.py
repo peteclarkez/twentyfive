@@ -75,8 +75,10 @@ class GameState:
     trump_suit: Suit | None
     face_up_card: Card | None
     current_trick: tuple[TrickPlay, ...]
+    completed_tricks: tuple[tuple[TrickPlay, ...], ...]  # tricks completed this round
     trick_number: int  # 1–5 within the current round
     round_number: int
+    game_id: str
     legal_moves: tuple[Move, ...]
 
     @property
