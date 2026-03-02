@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import random
 
+from twentyfive.ai.enhanced_heuristic import EnhancedHeuristicPlayer
+from twentyfive.ai.heuristic import HeuristicPlayer
+from twentyfive.ai.mcts import MCTSPlayer
+from twentyfive.ai.player import AIPlayer, RandomPlayer
 from twentyfive.game.engine import GameEngine
 from twentyfive.ui.cli import CLI
 
@@ -39,12 +43,41 @@ def _prompt_player_names(n: int) -> list[str]:
     return names
 
 
+def _prompt_ai_players(names: list[str], engine: GameEngine) -> dict[str, AIPlayer]:
+    """For each player, ask whether they are human or AI. Returns AI players only."""
+    ai_players: dict[str, AIPlayer] = {}
+    print("Player types:  [H] Human  [R] Random AI  [A] Heuristic AI  [E] Enhanced AI  [M] MCTS AI")
+    print()
+    for name in names:
+        while True:
+            raw = input(f"  {name}: (H/R/A/E/M) [H]: ").strip().upper()
+            if not raw or raw == "H":
+                break
+            if raw == "R":
+                ai_players[name] = RandomPlayer()
+                break
+            if raw == "A":
+                ai_players[name] = HeuristicPlayer()
+                break
+            if raw == "E":
+                ai_players[name] = EnhancedHeuristicPlayer()
+                break
+            if raw == "M":
+                ai_players[name] = MCTSPlayer(engine)
+                break
+            print("  Please enter H, R, A, E, or M.")
+    return ai_players
+
+
 def main() -> None:
     print("Welcome to Twenty-Five!")
     print()
     n = _prompt_player_count()
     names = _prompt_player_names(n)
-    CLI(GameEngine(player_names=names)).run()
+    print()
+    engine = GameEngine(player_names=names)
+    ai_players = _prompt_ai_players(names, engine)
+    CLI(engine, ai_players=ai_players).run()
 
 
 if __name__ == "__main__":

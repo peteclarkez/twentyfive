@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from twentyfive.cards.card import Card, Suit, is_trump
 from twentyfive.game.engine import GameEngine
@@ -23,6 +24,9 @@ from twentyfive.game.state import (
     Rob,
     TrickPlay,
 )
+
+if TYPE_CHECKING:
+    from twentyfive.ai.player import AIPlayer
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -45,8 +49,13 @@ def _colour_card(card: Card, trump_suit: Suit | None = None) -> str:
 
 
 class CLI:
-    def __init__(self, engine: GameEngine) -> None:
+    def __init__(
+        self,
+        engine: GameEngine,
+        ai_players: dict[str, AIPlayer] | None = None,
+    ) -> None:
         self._engine = engine
+        self._ai_players: dict[str, AIPlayer] = ai_players or {}
 
     def run(self) -> None:
         """Main game loop."""
@@ -163,6 +172,9 @@ class CLI:
     # ------------------------------------------------------------------
 
     def _prompt_move(self, state: GameState) -> Move:
+        current_name = state.current_player.name
+        if current_name in self._ai_players:
+            return self._ai_players[current_name].choose_move(state)
         if state.phase == Phase.ROB:
             return self._prompt_rob(state)
         if state.phase == Phase.ROUND_END:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import uuid
 from pathlib import Path
 
@@ -167,6 +168,21 @@ class GameEngine:
                     self._trump_suit.name,
                     self._face_up_card,
                 )
+
+    def clone(self) -> GameEngine:
+        """
+        Return a deep copy of this engine with audit disabled.
+
+        Used by MCTSPlayer to create isolated simulation environments without
+        affecting the real game state or writing to the audit log.
+        """
+        audit = self._audit
+        self._audit = None
+        try:
+            cloned = copy.deepcopy(self)
+        finally:
+            self._audit = audit
+        return cloned
 
     @property
     def is_game_over(self) -> bool:
