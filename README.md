@@ -37,22 +37,3 @@ The following sources were used to establish the rules and strategy documented i
 | [OrwellianIreland — 25 (PDF)](http://www.orwellianireland.com/25.pdf) | Scholarly essay by Brian Nugent covering rules, history, etymology, and strategy; most authoritative source on traditional play and the social conventions of the game |
 | [YouTube — Riffle Shuffle & Roll](https://www.youtube.com/watch?v=yhMMjVduF1k) | Video walkthrough of a full game with commentary on the ranking system and may-trump rule |
 
-## Setup
-
-```bash
-conda create -n twentyfive python=3.9
-conda activate twentyfive
-pip install -r requirements.txt
-```
-
-## Run
-
-```bash
-python -m twentyfive
-```
-
-## Build
-
-```bash
-python -m build
-```
