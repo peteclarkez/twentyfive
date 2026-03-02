@@ -235,6 +235,21 @@ that card visually (e.g. with a `(renege)` label) so the player can make an info
 **UI-16** The game header must display the current game ID, round number, and trick number
 on every screen so players can reference specific scenarios in the audit log.
 
+### 5.10 Rob Visibility (Normal View)
+
+**UI-17** In normal (hidden-hand) view, when a player robs the face-up card, all other players
+must be shown a rob-reveal screen before their own turn begins. This screen must display:
+- The name of the player who robbed
+- The Ace of trumps they hold (confirming their eligibility)
+- The face-up card they took
+
+The discard remains face-down and is not revealed to other players. This mirrors the physical
+game, where the rob is a visible table action — all players see who robbed and what card they
+gained, even though the discarded card is hidden.
+
+This requirement applies to normal view only. In master view all hands are already visible,
+so no additional reveal is needed.
+
 ---
 
 ## 6. Audit Log
@@ -312,4 +327,4 @@ decisions are made.
 |---|----------|--------|
 | OQ-1 | When multiple players are eligible to rob in seat order, can more than one player rob per round? (Traditional rules say only one rob per face-up card — GAME-10 assumes this.) | Assumed: one rob per round |
 | OQ-2 | If a player reaches exactly 25 mid-trick (before all players have played), does the round end immediately or does the trick finish? | Assumed: game ends immediately on reaching 25 |
-| OQ-3 | Is the discard during a rob shown to other players? | Assumed: face-down (not revealed) |
+| OQ-3 | Is the discard during a rob shown to other players? | Resolved: discard is face-down (not revealed). The Ace held and the card taken are shown publicly in normal view — see UI-17. |

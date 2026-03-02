@@ -69,6 +69,19 @@ hand into a realistic shot at two tricks.
 The same logic applies to a strong non-trump card: play it late when you can lead the suit
 yourself, rather than early when another player controls the lead.
 
+### Keeping Your Height
+
+When you cannot win a trick, the conventional play is to discard your **worst playable card** —
+the weakest card you are legally allowed to play. This is called keeping your height: preserving
+picture cards and strong non-trump cards for later.
+
+The value of this discipline is clearest in trick 5. A player who has exhausted their trump hand
+may lead trick 5 with a non-trump suit, hoping others' hands happen to match it and lose. If you
+have thrown away picture cards unnecessarily in earlier tricks, you have nothing to show at the end.
+
+**Example:** You hold K♦ and 2♣ and cannot win the current trick. Play the 2♣. The K♦ may win
+trick 5 if diamonds happen to be led or if no one can trump it.
+
 ---
 
 ## The "May Trump" Decision (Prodding)
@@ -91,6 +104,16 @@ strategic:
 A weak trump (e.g. 2 or 3 of trumps) is best used as a prod early in the hand (trick 1 or 2)
 to win a trick it would otherwise lose. Holding it too long is risky — if another player leads
 trump, you'll be forced to play it anyway, this time without choosing the moment.
+
+### Don't Let Someone Off Easy
+
+There is a social expectation that players later in the trick will **poke** if the cards played
+so far are light — a low card or one unlikely to win. This mirrors the obligation to prod into
+a leading player: when the trick looks winnable with a modest card, later players are expected
+to contest it rather than allow an easy win.
+
+Allowing a player to take a trick with a weak card when you could have contested it is
+considered poor play and contrary to the spirit of the game.
 
 ---
 
@@ -117,6 +140,61 @@ and known — taking it gives you a net improvement and information.
 
 **When the dealer robs the face-up Ace:**
 The dealer should almost always take the Ace of trumps if they can. It is the 4th highest trump and worth a discard of any weak card. The only exception is if the dealer has an exceptionally strong hand and prefers the existing trump card — which is rare. They may also not rob if they don't want to show other players they have a hand full of trumps
+
+---
+
+## Dealer's Advantage
+
+The deal rotates clockwise after each hand, and the rotation continues across games — there is
+no reset between games.
+
+Being the dealer carries a positional advantage: the player to the dealer's **right** leads the
+first trick, meaning the dealer is **last to play** in trick 1. This matters because the dealer
+has the most information when deciding whether to follow suit, trump, or discard.
+
+### The Dealer's Trick
+
+A trailing player will sometimes **poke** into trick 1 with a high non-trump picture card or a
+low trump — not necessarily expecting to win outright, but to force others' hands and give the
+dealer an opportunity. The dealer, playing last, can win the trick with a small trump or a
+picture card that would be beaten later in the hand when the field is stronger.
+
+**Example:** Hearts is led (non-trump). A player pokes with Q♥. The dealer holds 3♠ (trumps)
+and K♦. Rather than saving the low trump for a later trick where it will likely be beaten, the
+dealer trumps with the 3♠ to take trick 1 — a result that would have been impossible in trick 4.
+
+The dealer's trick is an acknowledged advantage, and other players expect the dealer to exploit
+it. Poking lightly into trick 1 specifically to manufacture a dealer's trick is standard play.
+
+### Bum Deal
+
+If the dealer makes a mistake — dealing the wrong number of cards to a player, dealing in the
+wrong order, or otherwise misdealing — any player may call a **bum deal**. The hand is declared
+void, the dealer **loses their turn**, and the deal passes to the next player as though the
+faulty dealer had not dealt at all.
+
+This rule enforces accuracy and ensures that the advantage of dealing cannot be exploited
+through deliberate misdeal.
+
+---
+
+## Suit Management: Following Suit as a Weapon
+
+When a non-trump suit is led and players follow suit, that suit is being progressively cleared
+from the field. Each player who follows is removing cards of that suit from their hand.
+
+If the same suit is led again in a later trick, the pool has thinned: fewer players hold it,
+meaning only those who happened to preserve cards of that suit (or who can trump) can compete.
+This gives a player who retains cards in a depleted suit a strong positional advantage when
+they eventually lead it.
+
+**Implication for discarding:** When you cannot win a trick and must throw away a card, consider
+which suits you want to hold. Discarding from a suit you never intend to lead again is safe;
+discarding from a suit you plan to exploit later weakens your position.
+
+**Example:** Diamonds is led in trick 1 and four players follow suit. You follow with your second
+diamond. In trick 3, you lead your remaining diamond — with the field stripped of diamonds, no
+one can follow suit cleanly. You are likely facing only trumps as competition.
 
 ---
 
@@ -159,6 +237,7 @@ These are widely observed informal rules that govern the social game:
 - **Never spoil deliberately without cause.** If you can win a trick cleanly, don't throw a worthless card just to waste a trick — unless preventing the leader from winning.
 - **Commiserate, don't gloat.** The game has a convivial, talkative tradition. Commentary is expected — silence after a big play is unusual.
 - **Robbing is always legal and never unsporting.** Never hesitate to rob if you hold the Ace of trumps.
+- **Call a bum deal promptly.** If you notice a misdeal, call it before any cards are played. Calling it after seeing your hand is considered poor form. See the Dealer's Advantage section for the full bum deal rule.
 
 ---
 
