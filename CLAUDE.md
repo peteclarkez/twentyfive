@@ -62,6 +62,47 @@ Each markdown file should:
 
 ---
 
+## Development Commands
+
+| Task | Command |
+|------|---------|
+| Run all tests | `python -m pytest` |
+| Run a single test file | `python -m pytest tests/test_foo.py -v` |
+| Format code | `ruff format .` |
+| Lint code | `ruff check .` |
+| Type check | `mypy twentyfive/` |
+| Run the game | `python -m twentyfive` |
+| Install dev dependencies | `pip install -e ".[dev]"` |
+
+## Code Style
+- Line length: 100 characters
+- Formatter: **ruff** (configured in `pyproject.toml` — replaces black + isort)
+- Type hints encouraged on all public functions and class signatures
+- Dataclasses preferred for domain objects (Card, Deck, Player, Trick, etc.)
+- Tests live in `tests/` and follow the `test_*.py` naming convention
+
+---
+
+## Autonomy (project-specific)
+
+These extend the global autonomy tiers in `~/.claude/CLAUDE.md`.
+
+**Proceed without asking:**
+- Add or update tests in `tests/`
+- Rewrite files in `twentyfive/` that use pyCardDeck (the decision to remove it is settled)
+- Add type hints, fix ruff/mypy warnings
+
+**Propose and wait:**
+- Change the Card, Deck, or Trick data model once defined
+- Add a new game phase or scoring variant
+- Introduce any new dependency
+
+**Never do:**
+- Change anything in `RULES.md` or `STRATEGY.md` without explicit instruction — those are the authoritative game spec
+- Guess at rule ambiguities; surface them and ask
+
+---
+
 ## Key Architectural Decisions
 
 - **No external card library:** The project deliberately avoids pyCardDeck and similar
