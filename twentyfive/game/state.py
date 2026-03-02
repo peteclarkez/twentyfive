@@ -9,6 +9,7 @@ from twentyfive.cards.card import Card, Suit
 class Phase(Enum):
     ROB = auto()
     TRICK = auto()
+    ROUND_END = auto()  # all 5 tricks complete; waiting for player to acknowledge
     GAME_OVER = auto()
 
 
@@ -39,6 +40,11 @@ class Rob(Move):
 @dataclass(frozen=True)
 class PassRob(Move):
     """Decline to rob (or ineligible — engine auto-applies for ineligible players)."""
+
+
+@dataclass(frozen=True)
+class ConfirmRoundEnd(Move):
+    """Acknowledge end of round — triggers the next deal."""
 
 
 # ---------------------------------------------------------------------------

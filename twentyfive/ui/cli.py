@@ -13,17 +13,17 @@ import sys
 from twentyfive.cards.card import Card, Suit, is_trump
 from twentyfive.game.engine import GameEngine
 from twentyfive.game.rules import get_renegeable_cards, trick_winner
-from twentyfive.game.state import GameState, Move, PassRob, Phase, PlayCard, Rob
+from twentyfive.game.state import ConfirmRoundEnd, GameState, Move, PassRob, Phase, PlayCard, Rob
 
 # ---------------------------------------------------------------------------
 # Colour helpers
 # ---------------------------------------------------------------------------
 
 _SUIT_COLOUR = {
-    Suit.HEARTS:   "\033[91m",   # bright red
+    Suit.HEARTS:   "\033[91m",       # bright red
     Suit.DIAMONDS: "\033[38;5;208m", # orange (from 256-color palette)
-    Suit.CLUBS:    "\033[34m",   # navy/blue
-    Suit.SPADES:   "\033[32m",   # green
+    Suit.CLUBS:    "\033[34m",       # navy/blue
+    Suit.SPADES:   "\033[32m",       # green
 }
 _TRUMP_COLOUR = "\033[97m"   # bright white
 _RESET = "\033[0m"
@@ -47,7 +47,11 @@ class CLI:
             move = self._prompt_move(state)
             self._engine.apply_move(move)
 
-        self._render_game_over(self._engine.get_state())
+        # Show the final game state, then pause before the summary screen
+        state = self._engine.get_state()
+        self._render(state)
+        self._wait_for_continue("  Press A or SPACE to see the final results...")
+        self._render_game_over(state)
 
     # ------------------------------------------------------------------
     # Rendering
@@ -57,8 +61,12 @@ class CLI:
         self._clear()
         width = 60
         print("=" * width)
+        if state.phase == Phase.ROUND_END:
+            trick_info = "Round complete"
+        else:
+            trick_info = f"Trick {state.trick_number}/5"
         print(
-            f"  TWENTY-FIVE  |  Round {state.round_number}  |  Trick {state.trick_number}/5"
+            f"  TWENTY-FIVE  |  Round {state.round_number}  |  {trick_info}"
             f"  |  Game {state.game_id[:8]}"
         )
         print("=" * width)
@@ -72,14 +80,16 @@ class CLI:
         print(f"  {trump_str}")
         print()
 
-        # Scores
+        # Scores — [leader] marks the player(s) with the highest score
+        max_score = max(p.score for p in state.players)
         print("  Scores:")
         for i, player in enumerate(state.players):
             marker = "* " if i == state.current_player_index else "  "
             dealer_tag = " [dealer]" if i == state.dealer_index else ""
+            leader_tag = " [leader]" if max_score > 0 and player.score == max_score else ""
             print(
                 f"  {marker}{player.name:<12} {player.score:>3} pts"
-                f"  ({player.tricks_won_this_round} tricks this round){dealer_tag}"
+                f"  ({player.tricks_won_this_round} tricks this round){dealer_tag}{leader_tag}"
             )
         print()
 
@@ -96,12 +106,23 @@ class CLI:
                 print(f"    Trick {trick_idx}: {plays_str}  → {winner.player_name} wins")
             print()
 
-        # Current trick
+        # Current trick — show [led] on lead card; [winning] on the current best card
         if state.current_trick:
             print("  Current trick:")
+            led_suit = state.current_trick[0].card.suit
+            current_winner_name: str | None = None
+            if len(state.current_trick) >= 1:
+                current_winner = trick_winner(
+                    list(state.current_trick), led_suit, state.trump_suit
+                )
+                current_winner_name = current_winner.player_name
             for i, tp in enumerate(state.current_trick):
                 led_tag = "  [led]" if i == 0 else ""
-                print(f"    {tp.player_name} → {_colour_card(tp.card, state.trump_suit)}{led_tag}")
+                win_tag = "  [winning]" if tp.player_name == current_winner_name else ""
+                print(
+                    f"    {tp.player_name} → "
+                    f"{_colour_card(tp.card, state.trump_suit)}{led_tag}{win_tag}"
+                )
             print()
 
         # All hands (master view)
@@ -116,7 +137,7 @@ class CLI:
         self._clear()
         width = 60
         print("=" * width)
-        print("  GAME OVER")
+        print(f"  GAME OVER  |  Game {state.game_id[:8]}")
         print("=" * width)
         print()
         sorted_players = sorted(state.players, key=lambda p: p.score, reverse=True)
@@ -135,7 +156,16 @@ class CLI:
     def _prompt_move(self, state: GameState) -> Move:
         if state.phase == Phase.ROB:
             return self._prompt_rob(state)
+        if state.phase == Phase.ROUND_END:
+            return self._prompt_round_end(state)
         return self._prompt_trick(state)
+
+    def _prompt_round_end(self, state: GameState) -> ConfirmRoundEnd:
+        """Show round summary and wait for the player to continue."""
+        print(f"  Round {state.round_number} complete.")
+        print()
+        self._wait_for_continue("  Press A or SPACE to deal the next hand...")
+        return ConfirmRoundEnd()
 
     def _prompt_rob(self, state: GameState) -> Move:
         """Two-step prompt for the rob phase."""
@@ -189,9 +219,10 @@ class CLI:
         assert state.trump_suit is not None
         renegeable = get_renegeable_cards(list(current.hand), led_card, state.trump_suit)
 
-        print(f"  {current.name}'s turn to play:")
+        action = "to lead" if led_card is None else "to play"
+        print(f"  {current.name}'s turn {action}:")
         for i, card in enumerate(legal_cards, 1):
-            renege_tag = "  (renege)" if card in renegeable else ""
+            renege_tag = "  (renegeable)" if card in renegeable else ""
             print(f"    [{i}] {_colour_card(card, state.trump_suit)}{renege_tag}")
         print("    [A] Auto-play (first legal card)")
         print()
@@ -205,6 +236,16 @@ class CLI:
     # ------------------------------------------------------------------
     # Input primitives
     # ------------------------------------------------------------------
+
+    def _wait_for_continue(self, msg: str) -> None:
+        """Print a message and block until the player presses A, SPACE, or Enter."""
+        print(msg)
+        print()
+        while True:
+            ch = self._getkey()
+            if ch in (" ", "a", "A", "\r", "\n"):
+                print()
+                return
 
     def _getkey(self) -> str:
         """Read a single keypress without requiring Enter (Unix); falls back on Windows."""

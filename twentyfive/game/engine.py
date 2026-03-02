@@ -9,6 +9,7 @@ from twentyfive.game.audit import GameAudit
 from twentyfive.game.player import Player
 from twentyfive.game.rules import get_legal_cards, get_legal_rob_moves, trick_winner
 from twentyfive.game.state import (
+    ConfirmRoundEnd,
     GameState,
     Move,
     Phase,
@@ -104,6 +105,8 @@ class GameEngine:
         # Capture pre-move context for audit
         pre_round = self._round_number
         pre_trick = self._trick_number
+        pre_phase = self._phase
+        pre_completed_count = len(self._completed_tricks_this_round)
         player = self._players[self._current_player_index]
         player_idx = self._current_player_index
 
@@ -112,15 +115,50 @@ class GameEngine:
                 self._apply_rob_move(move)
             case Phase.TRICK:
                 self._apply_trick_move(move)
+            case Phase.ROUND_END:
+                self._apply_confirm_round_end()
             case Phase.GAME_OVER:
                 raise ValueError("Game is over; no moves can be applied")
 
         if self._audit:
-            self._audit.record_move(
-                pre_round, pre_trick, player.name, player_idx, move, legal
-            )
-            # If a new round started, emit the deal event for it
-            if self._round_number != pre_round and self._phase != Phase.GAME_OVER:
+            # ConfirmRoundEnd is a UI acknowledgment — not a game decision; skip recording
+            if pre_phase != Phase.ROUND_END:
+                self._audit.record_move(
+                    pre_round, pre_trick, player.name, player_idx, move, legal
+                )
+
+            # Trick just resolved? (completed_tricks grew)
+            if len(self._completed_tricks_this_round) > pre_completed_count:
+                last_trick = self._completed_tricks_this_round[-1]
+                led_suit = last_trick[0].card.suit
+                winning_play = trick_winner(list(last_trick), led_suit, self._trump_suit)
+                winner_idx = next(
+                    i for i, p in enumerate(self._players)
+                    if p.name == winning_play.player_name
+                )
+                self._audit.record_trick_result(
+                    round_number=pre_round,
+                    trick_number=pre_trick,
+                    plays=list(last_trick),
+                    winner_name=winning_play.player_name,
+                    winner_index=winner_idx,
+                )
+
+            # Game just ended?
+            if self._phase == Phase.GAME_OVER and pre_phase != Phase.GAME_OVER:
+                winner = self._players[self._current_player_index]
+                self._audit.record_game_result(
+                    winner_name=winner.name,
+                    players=self._players,
+                )
+            # Round just ended (5th trick → ROUND_END)?
+            elif self._phase == Phase.ROUND_END and pre_phase != Phase.ROUND_END:
+                self._audit.record_hand_result(
+                    round_number=pre_round,
+                    players=self._players,
+                )
+            # New round started (ConfirmRoundEnd applied)?
+            elif self._round_number != pre_round:
                 self._audit.record_deal(
                     self._players,
                     self._round_number,
@@ -191,6 +229,9 @@ class GameEngine:
     def _compute_legal_moves(self) -> list[Move]:
         if self._phase == Phase.GAME_OVER:
             return []
+
+        if self._phase == Phase.ROUND_END:
+            return [ConfirmRoundEnd()]
 
         if self._phase == Phase.ROB:
             player = self._players[self._current_player_index]
@@ -273,18 +314,22 @@ class GameEngine:
 
         # Win condition: first to 25 (GAME-28 — checked after every trick)
         if winner.score >= 25:
+            self._current_trick = []  # already saved in completed_tricks above
             self._phase = Phase.GAME_OVER
             self._current_player_index = winner_idx
             return
 
         self._trick_number += 1
         self._current_trick = []
+        self._current_player_index = winner_idx
 
         if self._trick_number > 5:
-            # Round complete — start the next round
-            self._dealer_index = (self._dealer_index + 1) % len(self._players)
-            self._round_number += 1
-            self._start_round()
-        else:
-            # Winner leads the next trick
-            self._current_player_index = winner_idx
+            # Round complete — pause for acknowledgment before dealing next hand
+            self._phase = Phase.ROUND_END
+
+    def _apply_confirm_round_end(self) -> None:
+        """Start the next round after the player acknowledges the round end."""
+        n = len(self._players)
+        self._dealer_index = (self._dealer_index + 1) % n
+        self._round_number += 1
+        self._start_round()

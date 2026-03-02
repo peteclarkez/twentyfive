@@ -12,7 +12,7 @@ import random
 import pytest
 
 from twentyfive.game.engine import GameEngine
-from twentyfive.game.state import PassRob, Phase, PlayCard, Rob
+from twentyfive.game.state import ConfirmRoundEnd, PassRob, Phase, PlayCard, Rob
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -402,3 +402,52 @@ class TestRoundTransition:
                 assert state.round_number == initial_round + 1
                 break
             engine.apply_move(state.legal_moves[0])
+
+
+# ---------------------------------------------------------------------------
+# ROUND_END phase
+# ---------------------------------------------------------------------------
+
+
+class TestRoundEndPhase:
+    def _play_one_full_round(self, engine: GameEngine) -> None:
+        """Play until ROUND_END or GAME_OVER, whichever comes first."""
+        initial_round = engine.get_state().round_number
+        skip_rob_phase(engine)
+        while not engine.is_game_over:
+            state = engine.get_state()
+            if state.phase == Phase.ROUND_END or state.round_number != initial_round:
+                break
+            engine.apply_move(state.legal_moves[0])
+
+    def test_phase_becomes_round_end_after_five_tricks(self) -> None:
+        engine = make_engine(3)
+        self._play_one_full_round(engine)
+        if not engine.is_game_over:
+            assert engine.get_state().phase == Phase.ROUND_END
+
+    def test_round_end_legal_moves_is_confirm(self) -> None:
+        engine = make_engine(3)
+        self._play_one_full_round(engine)
+        if not engine.is_game_over:
+            state = engine.get_state()
+            assert state.phase == Phase.ROUND_END
+            assert state.legal_moves == (ConfirmRoundEnd(),)
+
+    def test_confirm_round_end_starts_new_round(self) -> None:
+        engine = make_engine(3)
+        self._play_one_full_round(engine)
+        if not engine.is_game_over:
+            assert engine.get_state().round_number == 1
+            engine.apply_move(ConfirmRoundEnd())
+            if not engine.is_game_over:
+                assert engine.get_state().round_number == 2
+                assert engine.get_state().phase in (Phase.ROB, Phase.TRICK)
+
+    def test_completed_tricks_visible_during_round_end(self) -> None:
+        engine = make_engine(3)
+        self._play_one_full_round(engine)
+        if not engine.is_game_over:
+            state = engine.get_state()
+            assert state.phase == Phase.ROUND_END
+            assert len(state.completed_tricks) == 5
