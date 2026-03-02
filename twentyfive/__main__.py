@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import random
 
 from twentyfive.ai.enhanced_heuristic import EnhancedHeuristicPlayer
@@ -70,6 +71,14 @@ def _prompt_ai_players(names: list[str], engine: GameEngine) -> dict[str, AIPlay
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Twenty-Five card game")
+    parser.add_argument(
+        "--seeall",
+        action="store_true",
+        help="Show all players' hands (master view). Default: hidden-hand mode.",
+    )
+    args = parser.parse_args()
+
     print("Welcome to Twenty-Five!")
     print()
     n = _prompt_player_count()
@@ -77,7 +86,12 @@ def main() -> None:
     print()
     engine = GameEngine(player_names=names)
     ai_players = _prompt_ai_players(names, engine)
-    CLI(engine, ai_players=ai_players).run()
+
+    human_names = [name for name in names if name not in ai_players]
+    # All-AI: no human to protect; show all hands for spectating
+    show_all = args.seeall or len(human_names) == 0
+
+    CLI(engine, ai_players=ai_players, show_all=show_all).run()
 
 
 if __name__ == "__main__":

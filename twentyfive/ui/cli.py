@@ -1,8 +1,11 @@
 """
-CLI for Twenty-Five — master view mode.
+CLI for Twenty-Five.
 
-All players' hands are shown simultaneously (privacy is not enforced).
-Designed for pass-the-terminal play around one screen, or for development/testing.
+Two view modes:
+  hidden-hand (default) — each player sees only their own hand; opponents' cards are
+      masked with '??'.  AI turns are resolved silently; played cards are printed inline.
+  master view (--seeall) — all hands shown simultaneously, rendering before every move.
+      Designed for pass-the-terminal play, spectating AI games, or development/testing.
 """
 
 from __future__ import annotations
@@ -53,16 +56,24 @@ class CLI:
         self,
         engine: GameEngine,
         ai_players: dict[str, AIPlayer] | None = None,
+        *,
+        show_all: bool = False,  # False = hidden-hand (default); True = master view
     ) -> None:
         self._engine = engine
         self._ai_players: dict[str, AIPlayer] = ai_players or {}
+        self._show_all = show_all
 
     def run(self) -> None:
         """Main game loop."""
         while not self._engine.is_game_over:
             state = self._engine.get_state()
-            self._render(state)
+            if self._should_render(state):
+                self._render(state)
             move = self._prompt_move(state)
+            if (not self._show_all
+                    and state.current_player.name in self._ai_players
+                    and state.phase in (Phase.TRICK, Phase.ROB)):
+                self._print_ai_action(state, move)
             self._engine.apply_move(move)
 
         # Show the final game state, then pause before the summary screen
@@ -70,6 +81,14 @@ class CLI:
         self._render(state)
         self._wait_for_continue("  Press A or SPACE to see the final results...")
         self._render_game_over(state)
+
+    def _should_render(self, state: GameState) -> bool:
+        if self._show_all:
+            return True  # master mode: always render
+        return (
+            state.current_player.name not in self._ai_players
+            or state.phase == Phase.ROUND_END
+        )
 
     # ------------------------------------------------------------------
     # Rendering
@@ -81,6 +100,8 @@ class CLI:
         print("=" * width)
         if state.phase == Phase.ROUND_END:
             trick_info = "Round complete"
+        elif state.phase == Phase.GAME_OVER:
+            trick_info = "Game over"
         else:
             trick_info = f"Trick {state.trick_number}/5"
         print(
@@ -92,7 +113,7 @@ class CLI:
         # Trump
         assert state.trump_suit is not None
         trump_str = f"Trump: {state.trump_suit.symbol} {state.trump_suit}"
-        if state.face_up_card:
+        if state.face_up_card and state.phase != Phase.GAME_OVER:
             face_up_coloured = _colour_card(state.face_up_card, state.trump_suit)
             trump_str += f"  |  Face-up: {face_up_coloured}  (available to rob)"
         print(f"  {trump_str}")
@@ -143,12 +164,20 @@ class CLI:
                 )
             print()
 
-        # All hands (master view)
+        # Hands — master view shows all; hidden view shows only the current player's hand
         print("  Hands:")
         for i, player in enumerate(state.players):
             marker = "* " if i == state.current_player_index else "  "
-            hand_str = "  ".join(_colour_card(c, state.trump_suit) for c in player.hand)
-            print(f"  {marker}{player.name:<12} {hand_str}")
+            show_hand = (
+                self._show_all
+                or state.phase in (Phase.ROUND_END, Phase.GAME_OVER)  # reveal all at round/game end
+                or i == state.current_player_index  # current player always sees their own hand
+            )
+            if show_hand:
+                hand_str = "  ".join(_colour_card(c, state.trump_suit) for c in player.hand)
+            else:
+                hand_str = "  ".join("??" for _ in player.hand) + f"  ({player.hand_size} cards)"
+            print(f"  {marker}{player.name:<12}  {hand_str}")
         print()
 
     def _render_game_over(self, state: GameState) -> None:
@@ -172,6 +201,10 @@ class CLI:
     # ------------------------------------------------------------------
 
     def _prompt_move(self, state: GameState) -> Move:
+        # In hidden mode, ROUND_END is always handled by a human keypress — an AI
+        # current player would return ConfirmRoundEnd instantly, skipping the summary.
+        if state.phase == Phase.ROUND_END and not self._show_all:
+            return self._prompt_round_end(state)
         current_name = state.current_player.name
         if current_name in self._ai_players:
             return self._ai_players[current_name].choose_move(state)
@@ -180,6 +213,21 @@ class CLI:
         if state.phase == Phase.ROUND_END:
             return self._prompt_round_end(state)
         return self._prompt_trick(state)
+
+    def _print_ai_action(self, state: GameState, move: Move) -> None:
+        """Print a one-line summary of an AI move (hidden mode only, no screen clear)."""
+        name = state.current_player.name
+        assert state.trump_suit is not None
+        if isinstance(move, PlayCard):
+            print(f"  {name} plays {_colour_card(move.card, state.trump_suit)}")
+        elif isinstance(move, Rob):
+            face_up = state.face_up_card
+            card_str = _colour_card(face_up, state.trump_suit) if face_up else "the face-up card"
+            print(f"  {name} robs ({card_str})")
+        elif isinstance(move, PassRob):
+            # Only mention if they had a real choice (could have robbed)
+            if any(isinstance(m, Rob) for m in state.legal_moves):
+                print(f"  {name} passes")
 
     def _prompt_round_end(self, state: GameState) -> ConfirmRoundEnd:
         """Show round summary and wait for the player to continue."""
