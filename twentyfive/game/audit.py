@@ -21,7 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from twentyfive.cards.card import Card
+from twentyfive.cards.card import Card, Suit
+from twentyfive.game.rules import card_global_rank
 from twentyfive.game.state import Move, PlayCard, Rob, TrickPlay
 
 if TYPE_CHECKING:
@@ -63,6 +64,7 @@ class GameAudit:
         player_index: int,
         move: Move,
         legal_moves: list[Move],
+        trump_suit: Suit | None = None,
     ) -> None:
         event: dict = {
             "event_type": _move_type(move),
@@ -76,6 +78,8 @@ class GameAudit:
         }
         if isinstance(move, PlayCard):
             event["card"] = str(move.card)
+            if trump_suit is not None:
+                event["card_rank"] = card_global_rank(move.card, trump_suit)
         elif isinstance(move, Rob):
             event["discard"] = str(move.discard)
         self._write(event)

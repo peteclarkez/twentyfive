@@ -7,6 +7,7 @@ import pytest
 
 from twentyfive.cards.card import ACE_OF_HEARTS, Card, Rank, Suit
 from twentyfive.game.rules import (
+    card_global_rank,
     get_legal_cards,
     get_legal_rob_moves,
     get_renegeable_cards,
@@ -574,3 +575,44 @@ class TestTrickWinner:
         ]
         winner = trick_winner(plays, Suit.CLUBS, Suit.HEARTS)
         assert winner.player_name == "A"
+
+
+# ---------------------------------------------------------------------------
+# card_global_rank
+# ---------------------------------------------------------------------------
+
+
+class TestCardGlobalRank:
+    def test_five_of_trump_is_rank_1(self) -> None:
+        for suit in Suit:
+            assert card_global_rank(Card(Rank.FIVE, suit), suit) == 1
+
+    def test_jack_of_trump_is_rank_2(self) -> None:
+        for suit in Suit:
+            assert card_global_rank(Card(Rank.JACK, suit), suit) == 2
+
+    def test_ace_of_hearts_is_rank_3(self) -> None:
+        for suit in Suit:
+            assert card_global_rank(ACE_OF_HEARTS, suit) == 3
+
+    def test_ace_of_trump_is_rank_4_for_non_hearts_trump(self) -> None:
+        for suit in (Suit.CLUBS, Suit.DIAMONDS, Suit.SPADES):
+            assert card_global_rank(Card(Rank.ACE, suit), suit) == 4
+
+    def test_trump_always_ranks_above_non_trump(self) -> None:
+        trump = Suit.CLUBS
+        weakest_trump = Card(Rank.TEN, trump)   # 10♣ has trump_rank 1 = last trump
+        best_non_trump = Card(Rank.KING, Suit.HEARTS)
+        assert card_global_rank(weakest_trump, trump) < card_global_rank(best_non_trump, trump)
+
+    def test_rank_changes_with_trump_suit(self) -> None:
+        # 5♣ is rank 1 under clubs trump, but not under spades trump
+        five_clubs = Card(Rank.FIVE, Suit.CLUBS)
+        assert card_global_rank(five_clubs, Suit.CLUBS) == 1
+        assert card_global_rank(five_clubs, Suit.SPADES) > 1
+
+    def test_all_52_cards_have_unique_rank_per_trump(self) -> None:
+        for trump_suit in Suit:
+            all_cards = [Card(r, s) for s in Suit for r in Rank]
+            ranks = [card_global_rank(c, trump_suit) for c in all_cards]
+            assert sorted(ranks) == list(range(1, 53))

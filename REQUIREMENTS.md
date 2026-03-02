@@ -146,7 +146,15 @@ wins the game immediately — even if the current round is unfinished.
 **GAME-29** The engine must expose the current scores for all players as part of the game
 state.
 
-### 4.6 Game State
+### 4.6 Global Card Ranking
+
+**GAME-32** The game layer must expose a `card_global_rank(card, trump_suit) -> int` function
+that returns a card's absolute strength rank among all 52 cards for the given trump suit
+(1 = strongest = 5 of trumps, 52 = weakest). Trumps are ranked first (by trump hierarchy),
+non-trumps after (by their within-suit rank). The ranking must be pre-computed at module
+import time as a lookup table covering all four possible trump suits and all 52 cards.
+
+### 4.7 Game State
 
 **GAME-30** The engine must expose a game state object containing at minimum:
 - Current phase (setup / rob / trick / game-over)
@@ -235,7 +243,23 @@ that card visually (e.g. with a `(renege)` label) so the player can make an info
 **UI-16** The game header must display the current game ID, round number, and trick number
 on every screen so players can reference specific scenarios in the audit log.
 
-### 5.10 Rob Visibility (Normal View)
+### 5.10 Card Ranking Indicators
+
+**UI-18** When a player is selecting a card to play (trick phase) or a card to discard (rob
+phase), each card must display its global rank as `#N` at the end of the line, where N=1 is
+the strongest card in the deck (5 of trumps) and N=52 is the weakest, given the current trump
+suit.
+
+**UI-19** When a player is selecting a card to play and at least one card has already been
+played in the current trick, any card that would make this player the current winning player
+(if played now, ignoring future plays) must be marked with `(+)`. The `(+)` indicator is not
+shown when the player is leading (no cards have been played yet in the trick).
+
+**UI-20** When a player is selecting a card to play or discard and two or more legal cards are
+available, the single weakest card (highest `#N` value) must be marked with `(-)` as a hint
+for the best discard candidate. Not shown when only one card is legal.
+
+### 5.11 Rob Visibility (Normal View)
 
 **UI-17** In normal (hidden-hand) view, when a player robs the face-up card, all other players
 must be shown a rob-reveal screen before their own turn begins. This screen must display:
@@ -281,6 +305,10 @@ explicit flush) so partial logs are recoverable if the process is interrupted.
 
 **AUD-7** The audit subsystem must live in the game layer (not the UI layer) so that it
 captures all decisions regardless of which UI is used.
+
+**AUD-8** The `play_card` audit event must include a `card_rank` field containing the global
+rank (1 = best, 52 = worst — see GAME-32) of the card played, so audit analysis tools do not
+need to re-derive rankings from raw card names.
 
 ---
 

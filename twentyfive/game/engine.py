@@ -124,7 +124,8 @@ class GameEngine:
             # ConfirmRoundEnd is a UI acknowledgment — not a game decision; skip recording
             if pre_phase != Phase.ROUND_END:
                 self._audit.record_move(
-                    pre_round, pre_trick, player.name, player_idx, move, legal
+                    pre_round, pre_trick, player.name, player_idx, move, legal,
+                    trump_suit=self._trump_suit,
                 )
 
             # Trick just resolved? (completed_tricks grew)

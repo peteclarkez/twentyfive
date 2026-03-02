@@ -120,6 +120,45 @@ def non_trump_rank(card: Card) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Global card rank — O(1) lookup covering all 52 cards × 4 trump suits
+# ---------------------------------------------------------------------------
+# Integer values: 1 = strongest (5 of trumps), 52 = weakest.
+# Trumps are ranked before all non-trumps; within non-trumps, ordered by
+# non_trump_rank descending; ties broken by suit.value ascending (arbitrary
+# but stable — no semantic meaning across suits).
+
+def _build_global_rank_table() -> dict[tuple[Suit, Card], int]:
+    result: dict[tuple[Suit, Card], int] = {}
+    all_cards = [Card(r, s) for s in Suit for r in Rank]
+    for trump_suit in Suit:
+        # Default-arg trick captures trump_suit by value, not by reference,
+        # making the closure safe even though sorted() is called immediately.
+        def sort_key(
+            card: Card,
+            _ts: Suit = trump_suit,  # noqa: B023  (intentional capture by value)
+        ) -> tuple[int, int, int]:
+            if is_trump(card, _ts):
+                return (1, trump_rank(card, _ts), 0)
+            return (0, non_trump_rank(card), -card.suit.value)
+
+        sorted_cards = sorted(all_cards, key=sort_key, reverse=True)
+        for pos, card in enumerate(sorted_cards, 1):
+            result[(trump_suit, card)] = pos
+    return result
+
+
+_GLOBAL_RANKS: dict[tuple[Suit, Card], int] = _build_global_rank_table()
+
+
+def card_global_rank(card: Card, trump_suit: Suit) -> int:
+    """
+    Return this card's global strength rank (1 = best = 5 of trumps, 52 = worst)
+    for the given trump suit.  Pre-computed at import time — O(1) lookup.
+    """
+    return _GLOBAL_RANKS[(trump_suit, card)]
+
+
+# ---------------------------------------------------------------------------
 # Legal move computation
 # ---------------------------------------------------------------------------
 

@@ -12,8 +12,17 @@ import sys
 
 from twentyfive.cards.card import Card, Suit, is_trump
 from twentyfive.game.engine import GameEngine
-from twentyfive.game.rules import get_renegeable_cards, trick_winner
-from twentyfive.game.state import ConfirmRoundEnd, GameState, Move, PassRob, Phase, PlayCard, Rob
+from twentyfive.game.rules import card_global_rank, get_renegeable_cards, trick_winner
+from twentyfive.game.state import (
+    ConfirmRoundEnd,
+    GameState,
+    Move,
+    PassRob,
+    Phase,
+    PlayCard,
+    Rob,
+    TrickPlay,
+)
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -202,8 +211,12 @@ class CLI:
         face_up_coloured = _colour_card(state.face_up_card, state.trump_suit)
         print(f"  Choose a card to discard (you will then take {face_up_coloured}):")
         hand_cards = list(current.hand)
+        worst_rob_rank = max(card_global_rank(c, state.trump_suit) for c in hand_cards)
         for i, card in enumerate(hand_cards, 1):
-            print(f"    [{i}] {_colour_card(card, state.trump_suit)}")
+            r = card_global_rank(card, state.trump_suit)
+            minus_tag = "  (-)" if len(hand_cards) > 1 and r == worst_rob_rank else ""
+            rank_tag  = f"  #{r}"
+            print(f"    [{i}] {_colour_card(card, state.trump_suit)}{minus_tag}{rank_tag}")
         print()
 
         idx = self._get_int_input(f"  Discard card (1-{len(hand_cards)}): ", 1, len(hand_cards))
@@ -214,16 +227,33 @@ class CLI:
         current = state.current_player
         legal_cards = [m.card for m in state.legal_moves if isinstance(m, PlayCard)]
 
-        # Compute which cards are renegeable (only relevant on a trump lead)
         led_card = state.current_trick[0].card if state.current_trick else None
         assert state.trump_suit is not None
         renegeable = get_renegeable_cards(list(current.hand), led_card, state.trump_suit)
 
+        ranks = {card: card_global_rank(card, state.trump_suit) for card in legal_cards}
+        worst_rank = max(ranks.values())
+
+        # (+): cards that would make this player the current winner if played now
+        winners: set[Card] = set()
+        if state.current_trick:
+            led_suit = state.current_trick[0].card.suit
+            for card in legal_cards:
+                hyp = list(state.current_trick) + [TrickPlay(current.name, card)]
+                if trick_winner(hyp, led_suit, state.trump_suit).player_name == current.name:
+                    winners.add(card)
+
         action = "to lead" if led_card is None else "to play"
         print(f"  {current.name}'s turn {action}:")
         for i, card in enumerate(legal_cards, 1):
+            plus_tag   = "  (+)" if card in winners else ""
+            minus_tag  = "  (-)" if len(legal_cards) > 1 and ranks[card] == worst_rank else ""
             renege_tag = "  (renegeable)" if card in renegeable else ""
-            print(f"    [{i}] {_colour_card(card, state.trump_suit)}{renege_tag}")
+            rank_tag   = f"  #{ranks[card]}"
+            print(
+                f"    [{i}] {_colour_card(card, state.trump_suit)}"
+                f"{plus_tag}{minus_tag}{renege_tag}{rank_tag}"
+            )
         print("    [A] Auto-play (first legal card)")
         print()
 
