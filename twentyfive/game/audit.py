@@ -5,6 +5,7 @@ One file per game: logs/game_<id8>_<YYYYMMDD_HHMMSS>.jsonl
 
 Event types
 -----------
+game_start   — first event: player names and types (Human / AI variant)
 deal         — emitted at the start of each round (full hands + trump)
 play_card    — a card played during the trick phase
 rob          — player robs the face-up trump card
@@ -36,6 +37,21 @@ class GameAudit:
         path = audit_dir / f"game_{game_id[:8]}_{ts}.jsonl"
         self._game_id = game_id
         self._file = path.open("a", encoding="utf-8")
+
+    def record_game_start(
+        self,
+        players: list[Player],
+        player_types: dict[str, str],
+    ) -> None:
+        self._write({
+            "event_type": "game_start",
+            "game_id": self._game_id,
+            "timestamp": _now(),
+            "players": [
+                {"name": p.name, "type": player_types.get(p.name, "Unknown")}
+                for p in players
+            ],
+        })
 
     def record_deal(
         self,

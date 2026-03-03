@@ -169,6 +169,11 @@ class GameEngine:
                     self._face_up_card,
                 )
 
+    def record_game_start(self, player_types: dict[str, str]) -> None:
+        """Record a game_start audit event with player names and types."""
+        if self._audit:
+            self._audit.record_game_start(self._players, player_types)
+
     def clone(self) -> GameEngine:
         """
         Return a deep copy of this engine with audit disabled.

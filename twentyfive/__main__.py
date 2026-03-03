@@ -70,6 +70,24 @@ def _prompt_ai_players(names: list[str], engine: GameEngine) -> dict[str, AIPlay
     return ai_players
 
 
+def _build_player_types(names: list[str], ai_players: dict[str, AIPlayer]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for name in names:
+        player = ai_players.get(name)
+        match player:
+            case None:
+                result[name] = "Human"
+            case MCTSPlayer():
+                result[name] = "MCTS AI"
+            case EnhancedHeuristicPlayer():
+                result[name] = "Enhanced AI"
+            case HeuristicPlayer():
+                result[name] = "Heuristic AI"
+            case _:
+                result[name] = "Random AI"
+    return result
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Twenty-Five card game")
     parser.add_argument(
@@ -90,6 +108,9 @@ def main() -> None:
     human_names = [name for name in names if name not in ai_players]
     # All-AI: no human to protect; show all hands for spectating
     show_all = args.seeall or len(human_names) == 0
+
+    player_types = _build_player_types(names, ai_players)
+    engine.record_game_start(player_types)
 
     CLI(engine, ai_players=ai_players, show_all=show_all).run()
 
