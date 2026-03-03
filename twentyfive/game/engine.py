@@ -343,7 +343,7 @@ class GameEngine:
         # Save the completed trick before clearing
         self._completed_tricks_this_round.append(tuple(self._current_trick))
 
-        # Win condition: first to 25 (GAME-28 — checked after every trick)
+        # Win condition: first to 25 (GAME-28 — checked after trick fully resolves)
         if winner.score >= 25:
             self._current_trick = []  # already saved in completed_tricks above
             self._phase = Phase.GAME_OVER

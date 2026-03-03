@@ -10,21 +10,23 @@ For strategy context relevant to AI player design, see [STRATEGY.md](STRATEGY.md
 A rules-accurate, testable Python implementation of Twenty-Five (25s), structured so that
 the game engine can be used independently of how the game is presented to players.
 
-**In scope for this document:** Phase 1 (MVP) only — core game engine and a pass-the-terminal
-CLI. Future phases (AI players, partnerships, GUI) are listed in [Section 7](#7-out-of-scope).
-
 ---
 
 ## 2. Architecture
 
-The codebase is split into three layers with a strict one-way dependency rule:
+The codebase is split into four layers with a strict one-way dependency rule:
 
 ```
 ┌─────────────────────────────┐
 │       UI Layer              │  CLI, future GUI, etc.
-│  (twentyfive/ui/)           │  — depends on game layer
+│  (twentyfive/ui/)           │  — depends on game + AI layers
 └────────────┬────────────────┘
              │ calls
+┌────────────▼────────────────┐
+│       AI Layer              │  AI player implementations
+│  (twentyfive/ai/)           │  — depends on game layer only
+└────────────┬────────────────┘
+             │ uses
 ┌────────────▼────────────────┐
 │       Game Logic Layer      │  Irish 25s rules, state machine
 │  (twentyfive/game/)         │  — depends on card layer only
@@ -36,13 +38,15 @@ The codebase is split into three layers with a strict one-way dependency rule:
 └─────────────────────────────┘
 ```
 
-**ARC-1** The game logic layer must have no imports from the UI layer.
-**ARC-2** The card primitives layer must have no imports from the game logic layer or UI layer.
+**ARC-1** The game logic layer must have no imports from the UI or AI layers.
+**ARC-2** The card primitives layer must have no imports from the game logic, AI, or UI layers.
 **ARC-3** The game layer must expose game state as read-only snapshots; it must never hand
 out mutable internal objects.
 **ARC-4** The game layer must expose the list of legal moves for the current player as its
 primary interface for the UI. The UI renders choices from this list — it does not compute
 legality independently.
+**ARC-5** The AI layer must depend only on the game layer. It must not be imported by the
+game logic or card primitives layers.
 
 ---
 
@@ -76,23 +80,34 @@ this section specifies what the engine must enforce.
 **GAME-4** At the start of each round, the deck is shuffled and each player is dealt 5 cards
 in packets of 3 then 2 (as per [RULES.md — Setup](RULES.md)).
 **GAME-5** After dealing, the top remaining card is turned face-up to determine the trump suit
-for the round. This card and its suit are part of the public game state.
+for the round. This card and its suit are part of the public game state. The face-up card
+becomes `None` after it is taken in a rob.
+**GAME-33** The engine accepts an optional `initial_dealer` index (default 0) to allow the
+first dealer to be chosen externally (e.g. at random by the caller).
 
 ### 4.2 Rob Phase
 
 **GAME-6** After the trump card is revealed and before the first trick is led, any eligible
 player may rob the pack (see [RULES.md — Robbing the Trump](RULES.md)).
-**GAME-7** Eligibility: a player holding the Ace of the trump suit may rob. If the face-up
-card is itself the Ace of the trump suit, the dealer may rob.
+**GAME-7** Exactly one player can be eligible to rob per round, by one of two mutually
+exclusive conditions:
+- A non-dealer player holds the Ace of the trump suit in their dealt hand; or
+- The face-up card is the Ace of the trump suit, in which case the dealer may rob.
+These cases are mutually exclusive: the Ace of Trump cannot simultaneously be face-up and
+in a non-dealer's hand.
 **GAME-8** Robbing is optional — no player is compelled to rob.
 **GAME-9** To rob, a player first discards exactly one card from their current hand face-down,
 then takes the face-up card. The player may not discard the face-up card itself (they choose
 their discard from their original hand before taking). The discard is not revealed to other
 players.
-**GAME-10** Robbing opportunities are resolved in seat order (starting from the player
-immediately left of the dealer). Only one rob per face-up card is possible.
+**GAME-10** At most one rob can occur per round (see GAME-7). The eligible player either
+robs or passes; no further rob opportunities exist in that round.
 **GAME-11** The engine must not allow trick play to begin until the rob phase is complete
 (all eligible players have either robbed or passed).
+**GAME-34** When a rob occurs the engine must record `rob_this_round` — a tuple of
+`(player_name, card_taken)` identifying who robbed and which face-up card they took. This
+field is cleared at the start of each new round and is `None` if no rob has occurred. It is
+exposed in the public game state (see GAME-30).
 
 ### 4.3 Trick Play
 
@@ -141,8 +156,11 @@ handle this correctly in all ranking and legality computations.
 
 **GAME-26** Each trick won scores 5 points for the winning player.
 **GAME-27** Scores accumulate across rounds within a game.
-**GAME-28** A win check must occur after every trick. The first player to reach 25 points
-wins the game immediately — even if the current round is unfinished.
+**GAME-28** A win check must occur after each trick is fully resolved — that is, after all
+players have played their card and the trick winner has been determined. The game ends
+immediately if the trick winner's cumulative score reaches 25 or more, even if the current
+round is unfinished. No win check occurs mid-trick; a player who would reach 25 by winning
+the trick cannot be declared the winner until all cards in that trick have been played.
 **GAME-29** The engine must expose the current scores for all players as part of the game
 state.
 
@@ -157,14 +175,17 @@ import time as a lookup table covering all four possible trump suits and all 52 
 ### 4.7 Game State
 
 **GAME-30** The engine must expose a game state object containing at minimum:
-- Current phase (setup / rob / trick / game-over)
-- Current dealer
-- Current player (whose turn it is)
-- Trump suit and face-up card (while it exists)
-- Each player's hand (see note on privacy below)
+- Current phase (rob / trick / round-end / game-over)
+- Current dealer index and current player index
+- Trump suit and face-up card (face-up card is `None` once taken)
+- Each player's hand (see GAME-31 on privacy)
 - Cards played in the current trick, in order
-- Running scores
-- Current trick number (1–5)
+- Completed tricks for the current round (full history, in order)
+- Running scores and tricks won this round for each player
+- Current trick number (1–5) and round number
+- Game ID (UUID, stable for the lifetime of the game)
+- Legal moves for the current player
+- Rob tracking: `rob_this_round` — see GAME-34
 
 **GAME-31** The game state must include all players' hands. Privacy (hiding hands from other
 players) is a UI concern, not an engine concern.
@@ -176,25 +197,27 @@ players) is a UI concern, not an engine concern.
 ### 5.1 Display Modes
 
 **UI-1** The CLI supports two display modes:
-- **Master view** — all players' hands are shown simultaneously. Intended for development,
-  testing, and small-group play around one screen.
-- **Normal view** — each player sees only their own hand. A "pass the terminal" prompt
-  appears between turns. *(Normal view is deferred; master view is the default for the MVP.)*
+- **Hidden-hand mode** *(default)* — each player sees only their own hand. Opponents' cards
+  are masked with `??`. AI players take their turns silently with a one-line summary printed
+  inline; the screen is cleared only when a human player's turn begins.
+- **Master view** *(`--seeall` flag)* — all players' hands are shown simultaneously.
+  Intended for development, testing, and spectating all-AI games.
 
-**UI-2** Master view is the active default mode for the MVP. Normal view is a planned
-enhancement and must be designed for but need not be implemented initially.
+**UI-2** Hidden-hand mode is the default. Master view is enabled with the `--seeall` flag.
+When all players are AI the CLI automatically enables master view for spectating.
 
-### 5.2 Screen Layout (Master View)
+### 5.2 Screen Layout
 
-**UI-3** Each turn must display, at minimum:
+**UI-3** Each rendered turn must display, at minimum:
 - Trump suit and face-up card (if not yet taken)
-- Current scores (all players, in seat order)
+- Current scores (all players, in seat order), with dealer and leader tagged
 - All hands (all players, in seat order) — with the active player's hand highlighted
-- Cards already played in the current trick, in play order
+- Cards already played in the current trick, in order
+- In hidden-hand mode: opponents' hands are masked with `??` (see also UI-17)
 - The current player's legal moves as a numbered list
 
-**UI-4** The screen must be refreshed (cleared and redrawn) at the start of each turn so the
-display is not cluttered with prior turns.
+**UI-4** The screen must be refreshed (cleared and redrawn) at the start of each human
+player's turn so the display is not cluttered with prior turns.
 
 ### 5.3 Input
 
@@ -203,7 +226,7 @@ legal move list. Free-form card entry is not required.
 **UI-6** Invalid input (non-numeric, out-of-range) must prompt the player to re-enter
 without advancing game state.
 **UI-7** The rob phase must prompt eligible players to either select a card to take or pass.
-If a player robs, they must select a card to discard from their updated hand.
+If a player robs, they must select a card to discard from their current hand.
 
 ### 5.4 End of Trick / Round / Game
 
@@ -228,18 +251,17 @@ must show a history of all tricks played so far in the round, not just the curre
 
 ### 5.7 Autoplay
 
-**UI-14** In master view mode, the player must have the option to auto-play the current
-player's move (rapid advance for testing). The auto-play strategy must be: (1) if any legal
-card would make this player the current trick winner, play the weakest such card (highest `#N`
-rank); otherwise (2) play the weakest legal card overall (highest `#N` rank). This preserves
-stronger cards while still advancing the game. The option must be accessible via the `[A]`
-input in the card selection prompt.
+**UI-14** The player must have the option to auto-play the current player's move. The
+auto-play strategy must be: (1) if any legal card would make this player the current trick
+winner, play the weakest such card (highest `#N` rank); otherwise (2) play the weakest
+legal card overall (highest `#N` rank). The option must be accessible via the `[A]` input
+in the card selection prompt.
 
 ### 5.8 Renege Indicator
 
 **UI-15** When a player is selecting a card to play and a legal move would constitute a
 renege (legally withholding a top-3 trump while other trumps are forced), the UI must mark
-that card visually (e.g. with a `(renege)` label) so the player can make an informed choice.
+that card visually (e.g. with a `(renegeable)` label) so the player can make an informed choice.
 
 ### 5.9 Game Identity in UI
 
@@ -262,20 +284,35 @@ shown when the player is leading (no cards have been played yet in the trick).
 available, the single weakest card (highest `#N` value) must be marked with `(-)` as a hint
 for the best discard candidate. Not shown when only one card is legal.
 
-### 5.11 Rob Visibility (Normal View)
+### 5.11 Rob Visibility (Hidden-Hand Mode)
 
-**UI-17** In normal (hidden-hand) view, when a player robs the face-up card, all other players
-must be shown a rob-reveal screen before their own turn begins. This screen must display:
-- The name of the player who robbed
-- The Ace of trumps they hold (confirming their eligibility)
-- The face-up card they took
+**UI-17** In hidden-hand mode, when a player robs the face-up card, the rob must be made
+visible to all players before the next human turn. This is achieved in two ways:
 
-The discard remains face-down and is not revealed to other players. This mirrors the physical
-game, where the rob is a visible table action — all players see who robbed and what card they
-gained, even though the discarded card is hidden.
+1. **Inline message** — immediately after the rob, a one-line summary is printed:
+   `{name} robs — takes {card}`. A keypress pause follows so the message is readable
+   before the screen clears.
+2. **Persistent hand display** — from the moment of the rob until the end of the round,
+   the robbing player's masked hand display reveals the publicly known cards:
+   - For a non-dealer rob: the face-up card taken *and* the Ace of Trump the player held
+     to establish eligibility are shown; all other cards remain masked as `??`.
+   - For a dealer rob: only the face-up card (which is the Ace of Trump) is shown.
+   If either known card is subsequently played in a trick, it drops back to `??`.
 
-This requirement applies to normal view only. In master view all hands are already visible,
-so no additional reveal is needed.
+The discard remains face-down and is never revealed to other players. This mirrors the
+physical game: all players see who robbed and what card was gained, even though the
+discarded card is hidden.
+
+This requirement applies to hidden-hand mode. In master view all hands are already visible.
+
+### 5.12 CLI Arguments
+
+**UI-21** The CLI must support a `--seeall` flag to enable master view (see UI-1).
+
+**UI-22** The CLI must support a `--1v3 NAME` argument for a quick-start 4-player game:
+the named human player versus three Enhanced AI opponents, with seat order and first dealer
+chosen at random. A brief setup summary (seat number, opponent names, first dealer) must
+be printed before play begins.
 
 ---
 
@@ -315,7 +352,49 @@ need to re-derive rankings from raw card names.
 
 ---
 
-## 7. Non-Functional Requirements
+## 7. AI Players
+
+Full design rationale and implementation details are in
+[AI_APPROACHES.md](twentyfive/ai/AI_APPROACHES.md).
+
+**AI-1** The project must include at least one AI player implementation. All AI players must
+implement a common interface (`AIPlayer`) with a single `choose_move(state: GameState) -> Move`
+method. AI players must be stateless between calls except for optional internal bookkeeping.
+
+**AI-2** Four AI implementations are provided, in increasing order of sophistication:
+- **RandomPlayer** — selects a uniformly random legal move.
+- **HeuristicPlayer** — applies rule-based strategy derived from [STRATEGY.md](STRATEGY.md).
+- **EnhancedHeuristicPlayer** — extends HeuristicPlayer with card-tracking, endgame logic,
+  multi-opponent danger assessment, and rob quality heuristics. This is the default AI type.
+- **MCTSPlayer** — Monte Carlo Tree Search with UCB1 selection and paranoid rollouts
+  (treats all opponents as a coalition). Accepts a configurable `simulations` count.
+
+**AI-3** Any number of players in a game may be AI-controlled. A game may consist entirely
+of AI players (all-AI games automatically enable master view for spectating).
+
+**AI-4** The `GameEngine` must expose a `clone()` method returning a deep copy with audit
+disabled, so AI implementations can simulate future game states without affecting the real
+game or the audit log.
+
+---
+
+## 8. Benchmark
+
+**BENCH-1** A benchmark module (`python -m twentyfive.benchmark`) must run automated
+multi-game comparisons between AI types and report aggregate statistics.
+
+**BENCH-2** The default benchmark runs one of each AI type per game (four players), with
+seats shuffled randomly each game to cancel position and dealer bias.
+
+**BENCH-3** The benchmark must report per-AI-type: games played, wins, win percentage,
+average final score, and average rounds per game.
+
+**BENCH-4** The benchmark must accept CLI arguments: `--games N`, `--seed N`,
+`--mcts-sims N`, and `--quiet`. It must also be callable as a library via `run_benchmark()`.
+
+---
+
+## 9. Non-Functional Requirements
 
 **NFR-1** Python 3.12 or later.
 **NFR-2** No external card or game libraries. All card and game logic must be implemented
@@ -333,29 +412,26 @@ with no errors or warnings.
 
 ---
 
-## 8. Out of Scope
+## 10. Out of Scope
 
-The following are explicitly deferred to later phases. They should not be designed against
-in the MVP, but the architecture must not actively prevent them.
+The following are explicitly deferred. The architecture must not actively prevent them.
 
 | Feature | Phase |
 |---------|-------|
-| AI / robotic players | Phase 2 |
-| Partnerships (2v2, 3v3) | Phase 3 |
-| GUI (web, desktop, or otherwise) | Phase 4 |
-| 45s and 110 variants | Phase 3+ |
-| Network / online play | Phase 4+ |
-| Normal (hidden-hand) pass-the-terminal mode | Phase 1b |
+| Partnerships (2v2, 3v3) | Future |
+| GUI (web, desktop, or otherwise) | Future |
+| 45s and 110 variants | Future |
+| Network / online play | Future |
+| ISMCTS for fair hidden-hand AI (currently AI sees all hands) | Future |
 
 ---
 
-## 9. Open Questions
+## 11. Open Questions
 
-Issues that may affect requirements as development proceeds. Update this section as
-decisions are made.
+Issues that may affect requirements as development proceeds.
 
 | # | Question | Status |
 |---|----------|--------|
-| OQ-1 | When multiple players are eligible to rob in seat order, can more than one player rob per round? (Traditional rules say only one rob per face-up card — GAME-10 assumes this.) | Assumed: one rob per round |
-| OQ-2 | If a player reaches exactly 25 mid-trick (before all players have played), does the round end immediately or does the trick finish? | Assumed: game ends immediately on reaching 25 |
-| OQ-3 | Is the discard during a rob shown to other players? | Resolved: discard is face-down (not revealed). The Ace held and the card taken are shown publicly in normal view — see UI-17. |
+| OQ-1 | When multiple players are eligible to rob in seat order, can more than one player rob per round? | Resolved: only one player is ever eligible per round. The Ace of Trump cannot be simultaneously face-up and in a non-dealer's hand, so the two eligibility cases (GAME-7) are mutually exclusive. At most one rob occurs per round. |
+| OQ-2 | If a player reaches exactly 25 mid-trick (before all players have played), does the round end immediately or does the trick finish? | Resolved: the trick must complete. All players play their card; the trick is resolved normally. Only then is the win condition checked. A following player could beat the potential winner and prevent them from scoring. See GAME-28. |
+| OQ-3 | Is the discard during a rob shown to other players? | Resolved: discard is face-down (not revealed). The Ace held and the card taken are shown publicly in hidden-hand view — see UI-17. |
