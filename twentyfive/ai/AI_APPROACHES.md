@@ -112,21 +112,51 @@ well in practice and is significantly simpler to implement than max^n MCTS.
 
 ---
 
-## 3. Information Set MCTS (ISMCTS)
+## 3. Information Set MCTS (ISMCTS) ← implemented
 
-An extension of MCTS for *imperfect* information games (needed once hidden-hand /
-normal view is implemented).
+`twentyfive/ai/ismcts.py` — Single-Observer ISMCTS (SO-ISMCTS) as described in
+Cowling, Powley & Whitehouse (2012).
 
-**Core idea — determinization:**
-- Randomly deal plausible hands to opponents, consistent with observed plays
-- Run MCTS on each determinization
-- Average the action values across determinizations
+Unlike `MCTSPlayer`, which has full visibility of all hands, `ISMCTSPlayer` uses only
+**public information**. Before each simulation it *determinizes* — randomly assigns
+plausible cards to opponents consistent with public knowledge — then runs UCB-guided
+tree search on that complete-information state. A shared tree is maintained across all
+determinizations.
 
-The canonical reference is: Cowling, Powley, Whitehouse (2012) — *Information Set
-Monte Carlo Tree Search*.
+### What counts as public information
+- The current player's own hand
+- All cards played in completed and current tricks
+- The face-up card (if not yet taken by a rob)
+- After a rob: the card the robber took, and (for non-dealer robs) the Ace of Trump
+  they held as eligibility proof
 
-For Twenty-Five in master view, regular MCTS (above) is sufficient. ISMCTS becomes
-relevant when opponents' hands are hidden.
+### ISMCTS innovation vs regular MCTS: `availability` counter
+The key difference is in the UCB formula. In standard MCTS the exploration term is
+`sqrt(ln(parent.visits) / visits)`. In ISMCTS each node also tracks `availability` —
+the number of times it was a *legal* option across determinizations — and this replaces
+`parent.visits`:
+
+```
+UCB = value_sum / visits  +  c * sqrt(log(availability) / availability)
+```
+
+This normalises for the fact that different determinizations expose different subsets
+of moves at each node. A move that is only legal in some determinizations should not
+be penalised for being under-explored when it wasn't even a legal option.
+
+### Algorithm (per simulation)
+1. **Determinize** — sample one plausible hand assignment for opponents
+2. **Clone** the engine and replace opponent hands with the sample
+3. **Selection** — walk the shared tree; at each node increment `availability` on all
+   compatible (legal-in-this-determinization) children; select by UCB; stop on unexplored legal move
+4. **Expansion** — create one new child for a legal-but-unexpanded move
+   (skip `ConfirmRoundEnd` — non-deterministic; handled in rollout)
+5. **Rollout** — random play to game end
+6. **Backpropagation** — same win/loss reward formula as `MCTSPlayer`
+
+### Relationship to MCTSPlayer
+`mcts.py` is kept unchanged. It remains correct for full-information use (master view)
+and is a useful reference implementation of the simpler algorithm.
 
 ---
 
@@ -188,7 +218,7 @@ infrastructure). Appropriate for a later phase once MCTS baseline is established
 | 0 ✅ | `HeuristicPlayer` — rule-based | Low | Moderate |
 | 1 ✅ | `MCTSPlayer` — UCB1 + random rollouts | Medium | Strong |
 | 2 ✅ | `EnhancedHeuristicPlayer` — card tracking, endgame, multi-opponent | Low | Moderate+ |
-| 3 | ISMCTS for hidden-hand mode | Medium | Needed for fairness |
+| 3 ✅ | `ISMCTSPlayer` — SO-ISMCTS for hidden-hand mode | Medium | Strong (fair) |
 | 4 | DDS oracle for benchmarking | Medium | Benchmark only |
 | 5 | Neural net (AlphaZero-style) | High | Very strong |
 
@@ -211,9 +241,9 @@ class AIPlayer(ABC):
     def choose_move(self, state: GameState) -> Move: ...
 ```
 
-All AI players receive only the `GameState` snapshot. `MCTSPlayer` additionally
-stores a reference to the live `GameEngine` (passed in `__init__`) so it can clone
-the engine for simulation without affecting the real game.
+All AI players receive only the `GameState` snapshot. `MCTSPlayer` and `ISMCTSPlayer`
+additionally store a reference to the live `GameEngine` (passed in `__init__`) so they
+can clone the engine for simulation without affecting the real game.
 
 ### Files
 ```
@@ -221,6 +251,7 @@ twentyfive/ai/
   player.py              AIPlayer ABC, RandomPlayer
   heuristic.py           HeuristicPlayer (rule-based)
   enhanced_heuristic.py  EnhancedHeuristicPlayer (5 improvements over HeuristicPlayer)
-  mcts.py                MCTSPlayer (UCB1 MCTS)
-  __init__.py            re-exports all four
+  mcts.py                MCTSPlayer (UCB1 MCTS, full-information)
+  ismcts.py              ISMCTSPlayer (SO-ISMCTS, public-info only)
+  __init__.py            re-exports all five
 ```

@@ -12,36 +12,52 @@ that have been run, and what the results tell us about each AI's playing style.
 | `random` | `RandomPlayer` | Plays a random legal card every time — baseline only |
 | `heuristic` | `HeuristicPlayer` | Rule-based strategy derived from STRATEGY.md |
 | `enhanced` | `EnhancedHeuristicPlayer` | Heuristic + 7 enhancements (see below) |
-| `mcts` | `MCTSPlayer` | Paranoid UCB1 Monte Carlo Tree Search (500 sims default) |
+| `mcts` | `MCTSPlayer` | Paranoid UCB1 MCTS; reads all hands (full-information) |
+| `ismcts` | `ISMCTSPlayer` | SO-ISMCTS; uses only public information (fair hidden-hand AI) |
+
+The key distinction between `mcts` and `ismcts` is fairness: `MCTSPlayer` reads every
+opponent's real hand from `GameState` when building simulations. `ISMCTSPlayer` samples
+plausible hands using only public information (played cards, face-up card, rob reveals).
+In benchmark play all five AIs are seated at the same table, so `mcts`'s information
+advantage translates directly into a win-rate edge.
 
 ---
 
 ## Benchmark 1: Mixed Competition (Individual Win Rate)
 
-**Setup:** One player of each AI type per game. Seats are shuffled randomly each game
-to cancel position and dealer bias. The winner is whoever first reaches 25 points.
+**Setup:** One player of each AI type per game (5 players). Seats are shuffled randomly
+each game to cancel position and dealer bias. The winner is whoever first reaches 25 points.
 
 **Metric:** Win percentage, average final score, average rounds per game.
 
 **Run with:**
 ```bash
-python -m twentyfive.benchmark --games 50 --seed 42 --mcts-sims 50
+python -m twentyfive.benchmark --games 100 --seed 42 --mcts-sims 200
 ```
 
-### Results (50 games, MCTS 50 sims, seed 42)
+### Results (100 games, MCTS/ISMCTS 200 sims, seed 42)
 
-| AI Type     | Wins | Win%  | Avg Score | Avg Rounds |
-|-------------|------|-------|-----------|------------|
-| MCTS (50)   |  18  | 36.0% |   15.5    |    2.6     |
-| Heuristic   |  14  | 28.0% |   15.1    |    2.6     |
-| Enhanced    |  11  | 22.0% |   13.9    |    2.6     |
-| Random      |   7  | 14.0% |   11.4    |    2.6     |
+| AI Type      | Wins | Win%  | Avg Score | Avg Rounds |
+|--------------|------|-------|-----------|------------|
+| MCTS (200)   |  27  | 27.0% |   14.8    |    2.9     |
+| Heuristic    |  25  | 25.0% |   14.4    |    2.9     |
+| ISMCTS (200) |  19  | 19.0% |   11.2    |    2.9     |
+| Enhanced     |  17  | 17.0% |   12.8    |    2.9     |
+| Random       |  12  | 12.0% |   11.3    |    2.9     |
 
-**Interpretation:** MCTS wins most often because it plays a purely optimal individual
-strategy. Enhanced underperforms Heuristic in individual competition because some of its
-enhancements (E6, E7) are cooperative — they preserve collective defensive resources at
-the cost of personal gain. In a free-for-all where no other player reciprocates, this
-is a net loss.
+**Interpretation:**
+
+- **MCTS leads** because it reads all hands (full information), giving it a structural
+  advantage over every other player at the table.
+- **Heuristic edges Enhanced** in individual competition because some Enhanced enhancements
+  (E6, E7) are cooperative — they sacrifice personal gain to preserve collective defensive
+  resources. In a free-for-all where no opponent reciprocates, this is a net loss.
+- **ISMCTS beats Random** but trails the heuristics, for two reasons: (1) it voluntarily
+  ignores opponent hands (by design — it simulates hidden-hand play), and (2) its random
+  rollouts carry no domain knowledge. In hidden-hand mode against humans, ISMCTS is the
+  *fair* AI; in a fully-observed benchmark it operates at an information disadvantage.
+- **Average rounds = 2.9** across all configurations — the extra player (5 vs 4) produces
+  slightly longer games as there are more opponents to suppress the leader.
 
 ---
 
@@ -158,10 +174,10 @@ still influencing the critical endgame decisions.
 ### Standard mixed benchmark (recommended baseline)
 
 ```bash
-python -m twentyfive.benchmark --games 50 --seed 42 --mcts-sims 50
+python -m twentyfive.benchmark --games 100 --seed 42 --mcts-sims 200
 ```
 
-### Reproducible full run (slower — MCTS at 500 sims)
+### Reproducible full run (slower — MCTS/ISMCTS at 500 sims)
 
 ```bash
 python -m twentyfive.benchmark --games 20 --seed 42
@@ -174,8 +190,9 @@ import random, statistics
 from twentyfive.benchmark import _run_game
 
 for label, ai_types in [
-    ("4 × Enhanced", ["enhanced"] * 4),
-    ("4 × MCTS(50)", ["mcts"] * 4),
+    ("5 × Enhanced", ["enhanced"] * 5),
+    ("5 × MCTS(50)",  ["mcts"] * 5),
+    ("5 × ISMCTS(50)", ["ismcts"] * 5),
 ]:
     random.seed(42)
     rounds = [_run_game(ai_types, simulations=50)[2] for _ in range(50)]
@@ -188,12 +205,13 @@ for label, ai_types in [
 
 ### Mixed competition (Benchmark 1)
 
-| Date       | Run            | Enhanced Win% | Heuristic Win% | Notes |
-|------------|----------------|---------------|----------------|-------|
-| 2026-03-03 | 50g, MCTS 100s | 24% | 30% | First run after E6/E7 added |
-| 2026-03-03 | 50g, MCTS 100s | 18% | 26% | After hard_danger / my_score threshold fixes |
-| 2026-03-03 | 200g, MCTS 50s | 19.5% | 29.5% | Large run; E6 on, E7 not endgame-gated |
-| 2026-03-03 | 50g, MCTS 50s  | 22%  | 28%  | **Current** — E6 off by default, E7 endgame-only |
+| Date       | Players | Run              | MCTS Win% | Heuristic Win% | Enhanced Win% | Notes |
+|------------|---------|------------------|-----------|----------------|---------------|-------|
+| 2026-03-03 | 4       | 50g, MCTS 100s   | —         | 30%            | 24%           | First run after E6/E7 added |
+| 2026-03-03 | 4       | 50g, MCTS 100s   | —         | 26%            | 18%           | After hard_danger / my_score threshold fixes |
+| 2026-03-03 | 4       | 200g, MCTS 50s   | —         | 29.5%          | 19.5%         | Large run; E6 on, E7 not endgame-gated |
+| 2026-03-03 | 4       | 50g, MCTS 50s    | —         | 28%            | 22%           | E6 off by default, E7 endgame-only |
+| 2026-03-03 | 5       | 100g, MCTS/ISMCTS 200s | 27% | 25%       | 17%           | **Current** — 5-player with ISMCTS; MCTS full-info leads |
 
 ### Cooperative game length (Benchmark 2)
 

@@ -1,7 +1,8 @@
 """
 AI benchmark framework for Twenty-Five.
 
-Runs automated games with one of each AI type per game (Random, Heuristic, Enhanced, MCTS).
+Runs automated games with one of each AI type per game
+(Random, Heuristic, Enhanced, MCTS, ISMCTS — 5 players).
 Seats are shuffled randomly each game to cancel position/dealer bias.
 
 Usage:
@@ -16,11 +17,12 @@ from dataclasses import dataclass
 
 from twentyfive.ai.enhanced_heuristic import EnhancedHeuristicPlayer
 from twentyfive.ai.heuristic import HeuristicPlayer
+from twentyfive.ai.ismcts import ISMCTSPlayer
 from twentyfive.ai.mcts import MCTSPlayer
 from twentyfive.ai.player import AIPlayer, RandomPlayer
 from twentyfive.game.engine import GameEngine
 
-_DEFAULT_AI_TYPES = ["random", "heuristic", "enhanced", "mcts"]
+_DEFAULT_AI_TYPES = ["random", "heuristic", "enhanced", "mcts", "ismcts"]
 
 
 @dataclass
@@ -44,6 +46,8 @@ def _make_ai(ai_type: str, engine: GameEngine, simulations: int) -> AIPlayer:
             return EnhancedHeuristicPlayer()
         case "mcts":
             return MCTSPlayer(engine, simulations=simulations)
+        case "ismcts":
+            return ISMCTSPlayer(engine, simulations=simulations)
         case _:
             raise ValueError(f"Unknown AI type: {ai_type!r}")
 
@@ -51,6 +55,8 @@ def _make_ai(ai_type: str, engine: GameEngine, simulations: int) -> AIPlayer:
 def _ai_label(ai_type: str, simulations: int) -> str:
     if ai_type == "mcts":
         return f"MCTS ({simulations})"
+    if ai_type == "ismcts":
+        return f"ISMCTS ({simulations})"
     return ai_type.capitalize()
 
 

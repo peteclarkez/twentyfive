@@ -12,9 +12,9 @@ from twentyfive.benchmark import run_benchmark
 
 
 class TestRunBenchmark:
-    def test_returns_all_four_ai_types(self) -> None:
+    def test_returns_all_five_ai_types(self) -> None:
         stats = run_benchmark(n_games=2, seed=42, quiet=True, simulations=5)
-        assert set(stats.keys()) == {"random", "heuristic", "enhanced", "mcts"}
+        assert set(stats.keys()) == {"random", "heuristic", "enhanced", "mcts", "ismcts"}
 
     def test_win_count_equals_game_count(self) -> None:
         """Exactly one winner per game."""

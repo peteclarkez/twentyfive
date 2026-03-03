@@ -5,7 +5,7 @@ import random
 
 from twentyfive.ai.enhanced_heuristic import EnhancedHeuristicPlayer
 from twentyfive.ai.heuristic import HeuristicPlayer
-from twentyfive.ai.mcts import MCTSPlayer
+from twentyfive.ai.ismcts import ISMCTSPlayer
 from twentyfive.ai.player import AIPlayer, RandomPlayer
 from twentyfive.game.engine import GameEngine
 from twentyfive.ui.cli import CLI
@@ -47,7 +47,7 @@ def _prompt_player_names(n: int) -> list[str]:
 def _prompt_ai_players(names: list[str], engine: GameEngine) -> dict[str, AIPlayer]:
     """For each player, ask whether they are human or AI. Returns AI players only."""
     ai_players: dict[str, AIPlayer] = {}
-    print("Player types:  [H] Human  [R] Random AI  [A] Heuristic AI  [E] Enhanced AI  [M] MCTS AI")
+    print("Player types:  [H] Human  [R] Random AI  [A] Heuristic AI  [E] Enhanced AI  [M] ISMCTS")
     print()
     for name in names:
         while True:
@@ -64,7 +64,7 @@ def _prompt_ai_players(names: list[str], engine: GameEngine) -> dict[str, AIPlay
                 ai_players[name] = HeuristicPlayer()
                 break
             if raw == "M":
-                ai_players[name] = MCTSPlayer(engine)
+                ai_players[name] = ISMCTSPlayer(engine)
                 break
             print("  Please enter H, R, A, E, or M.")
     return ai_players
@@ -77,8 +77,8 @@ def _build_player_types(names: list[str], ai_players: dict[str, AIPlayer]) -> di
         match player:
             case None:
                 result[name] = "Human"
-            case MCTSPlayer():
-                result[name] = "MCTS AI"
+            case ISMCTSPlayer():
+                result[name] = "ISMCTS AI"
             case EnhancedHeuristicPlayer():
                 result[name] = "Enhanced AI"
             case HeuristicPlayer():
@@ -105,7 +105,7 @@ def _setup_quick_1v3(
 
     initial_dealer = random.randrange(4)
     engine = GameEngine(player_names=all_names, initial_dealer=initial_dealer)
-    ai_players = {name: EnhancedHeuristicPlayer() for name in ai_names}
+    ai_players: dict[str, AIPlayer] = {name: EnhancedHeuristicPlayer() for name in ai_names}
     return engine, ai_players, all_names
 
 
