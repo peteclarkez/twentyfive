@@ -104,7 +104,7 @@ class MCTSPlayer(AIPlayer):
         if not engine.is_game_over and node.untried_moves:
             move = node.untried_moves.pop(random.randrange(len(node.untried_moves)))
             engine.apply_move(move)
-            if not isinstance(move, ConfirmRoundEnd) and not engine.is_game_over:
+            if not isinstance(move, ConfirmRoundEnd):
                 child = _Node(
                     parent=node,
                     untried_moves=list(engine.get_state().legal_moves),
