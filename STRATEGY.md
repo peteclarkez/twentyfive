@@ -203,7 +203,9 @@ one can follow suit cleanly. You are likely facing only trumps as competition.
 When a player is on 20 points, they need only **one more trick** to win (5 points = 25 total).
 This triggers a collective defensive mode:
 
-1. **The lead player should open with trump** to smoke out any strong cards before the  near-winner can use them.
+1. **The lead player should open with a strong trump** to smoke out any strong cards before
+   the near-winner can use them. Leading a weak trump can backfire — see *Coordinated Play
+   Against a Danger Player* below.
 2. **Hold your Five in reserve** until the near-winner is about to win a trick, then play it.
 3. **Let another player win the trick** rather than the near-winner — it is better for a
    neutral player to score than to let the leader win.
@@ -211,6 +213,64 @@ This triggers a collective defensive mode:
    the near-winner will also play a strong card — consider whether letting a third player
    win the trick is better than contesting it and accidentally letting the near-winner
    through.
+
+---
+
+## Coordinated Play Against a Danger Player
+
+When a player is on 20 points, all other players share a defensive interest. Effective
+co-ordinated defence depends on **not wasting each other's resources**. Two common failures
+undermine this coordination:
+
+### Don't Spend Trump When the Danger Player Is Already Losing the Trick
+
+If the danger player has played and is currently losing the trick — and the player currently
+winning is not also a danger player — there is no need to spend a strong trump. Let the
+trick pass.
+
+**Example from play:** Peter (20 pts, danger) leads A♦ (the weakest diamond). Eve prods
+with 9♣ (trump). Kate prods with 4♣ (stronger trump, now winning). At this point Peter's
+A♦ is beaten — he is going to lose the trick. Dave holds 5♣ (the Five, the strongest card
+in the game) and also holds non-trump diamonds. Dave uses the may-trump rule and plays 5♣
+to win the trick over Kate.
+
+This is the wrong play. Peter was already losing to Kate, a non-danger player. Dave spent
+his most valuable defensive card — the one card that could stop Peter winning any future
+trick — to take a trick that didn't need taking. Kate winning trick 1 is fine; Dave holding
+5♣ into trick 3 or 4 is far more valuable.
+
+**The principle:** Before spending trump against a danger player, check who is currently
+winning the trick. If the danger player is not winning, and the current leader is a safe
+player, stand down. Save your strong cards for a trick where the danger player is actually
+in front.
+
+### Avoid Leading a Weak Trump When Suppressing a Danger Player
+
+When leading against a danger player, there is a temptation to open with any trump — even
+a low one — to "smoke them out." This can backfire badly: a weak trump lead forces every
+other player who holds trump to respond with trump, depleting the collective defensive
+resource for the remaining tricks.
+
+**Example from play:** Dave wins trick 1 and must lead trick 2. Peter is on 20 points.
+Dave holds 8♣ (clubs trump, near the bottom of the trump rankings) and three non-trump
+cards. Dave leads 8♣. Kate holds 3♣ — a stronger trump — and is legally required to
+follow trump. Kate's 3♣ beats Dave's 8♣ and Kate wins the trick. Both players have spent
+a trump, and neither achieved the goal of suppressing Peter.
+
+**The principle:** A weak trump lead that you don't expect to win only strips trump from
+your allies. Consider the alternatives:
+
+- **Lead non-trump** to preserve collective trump resources, letting others conserve their
+  defensive cards. A non-trump lead gives danger players no free points and keeps trump
+  intact for a later trick where the danger player is actually threatening.
+- **Lead a strong trump** only if you are confident it will win (or nearly so), either
+  because you plan to score yourself or because you are certain your remaining hand is
+  strong enough to cover the danger player's future tricks without help.
+
+A weak trump lead is occasionally correct — for example, if your hand is very weak and
+you want to draw out the danger player's trump before trick 5. But in general, the lower
+your trump, the stronger the case for leading non-trump instead and saving it for a
+follow situation where it can actually win.
 
 ---
 

@@ -1,7 +1,7 @@
 """
 EnhancedHeuristicPlayer — improved strategy-driven AI extending HeuristicPlayer.
 
-Adds five enhancements over the base HeuristicPlayer:
+Adds seven enhancements over the base HeuristicPlayer:
 
   1. Card tracking  — when leading, prefer a suit where you hold the highest
                       remaining card (dominance detection using completed tricks).
@@ -13,6 +13,17 @@ Adds five enhancements over the base HeuristicPlayer:
                       stripping a suit you can never follow anyway).
   5. Don't over-trump — when following, exhaust non-trump winners before spending
                         trump; don't burn a high trump to beat a low trump.
+  6. Let safe player win — when following, if a genuine danger player (≥20 pts)
+                           has already played and is losing, and I am not close to
+                           winning myself (<15 pts), don't spend trump; let the safe
+                           current leader keep the trick.
+                           Disabled by default (_e6_enabled = False); intended as a
+                           building block for future cooperative/personality variants.
+  7. Weak trump lead — late game only (tricks 4–5): when leading against a genuine
+                       danger player (≥20 pts) and I am not close to winning myself
+                       (<15 pts), only lead trump if it is Queen-rank or stronger;
+                       otherwise prefer non-trump to preserve collective defensive
+                       trump for the remaining tricks.
 """
 
 from __future__ import annotations
@@ -22,7 +33,7 @@ from collections.abc import Callable
 
 from twentyfive.ai.player import AIPlayer
 from twentyfive.cards.card import Card, Rank, Suit, is_trump
-from twentyfive.game.rules import card_global_rank, non_trump_rank, trick_winner
+from twentyfive.game.rules import card_global_rank, non_trump_rank, trick_winner, trump_rank
 from twentyfive.game.state import (
     ConfirmRoundEnd,
     GameState,
@@ -36,7 +47,11 @@ from twentyfive.game.state import (
 
 
 class EnhancedHeuristicPlayer(AIPlayer):
-    """Enhanced strategy AI — all five improvements over the base HeuristicPlayer."""
+    """Enhanced strategy AI — all seven improvements over the base HeuristicPlayer."""
+
+    # E6 is disabled by default.  Flip to True in subclasses or personality variants
+    # to activate cooperative "let safe player win" behaviour.
+    _e6_enabled: bool = False
 
     def choose_move(self, state: GameState) -> Move:
         match state.phase:
@@ -98,6 +113,12 @@ class EnhancedHeuristicPlayer(AIPlayer):
             if leader.score >= 15:
                 danger_players.add(leader.name)
 
+        # Hard danger: players genuinely threatening to win (≥20 pts only).
+        # E6 and E7 use this stricter set so cooperative passivity doesn't fire
+        # against a mere score leader at 15 pts.
+        hard_danger: set[str] = {p.name for p in others if p.score >= 20}
+        my_score = next(p.score for p in state.players if p.name == my_name)
+
         # Card tracking: collect all cards played so far this round
         played_cards: set[Card] = {tp.card for trick in state.completed_tricks for tp in trick}
         played_cards |= {tp.card for tp in state.current_trick}
@@ -119,7 +140,8 @@ class EnhancedHeuristicPlayer(AIPlayer):
         # --- Leading ---
         if not state.current_trick:
             return self._lead(
-                legal_cards, danger_players, trump_suit, by_rank, is_endgame, played_cards
+                legal_cards, danger_players, trump_suit, by_rank, is_endgame, played_cards,
+                hard_danger=hard_danger, my_score=my_score,
             )
 
         # --- Following ---
@@ -127,6 +149,19 @@ class EnhancedHeuristicPlayer(AIPlayer):
         # 1. Must stop a danger player who is currently winning
         if danger_winning and winners:
             return PlayCard(card=min(winners, key=by_rank))  # strongest winner
+
+        # Enhancement 6: danger player has already played but is losing — let the trick pass.
+        # Disabled by default; enabled via _e6_enabled for cooperative/personality variants.
+        # Only fires for genuine ≥20 pt danger AND I'm not close to winning myself (<15 pts).
+        if self._e6_enabled and hard_danger and not danger_winning and my_score < 15:
+            danger_has_played = any(tp.player_name in hard_danger for tp in state.current_trick)
+            if danger_has_played:
+                # A non-trump winner costs nothing defensively — use the weakest if available
+                nt_w = [c for c in winners if not is_trump(c, trump_suit)]
+                if nt_w:
+                    return PlayCard(card=max(nt_w, key=by_rank))
+                # Winning would require trump — don't spend it; discard instead
+                return PlayCard(card=max(legal_cards, key=by_rank))
 
         # Enhancement 5: use non-trump winners before spending trump
         non_trump_winners = [c for c in winners if not is_trump(c, trump_suit)]
@@ -149,7 +184,7 @@ class EnhancedHeuristicPlayer(AIPlayer):
         return PlayCard(card=max(legal_cards, key=by_rank))
 
     # ------------------------------------------------------------------
-    # Lead selection (Enhancements 1, 2, 3)
+    # Lead selection (Enhancements 1, 2, 3, 7)
     # ------------------------------------------------------------------
 
     def _lead(
@@ -160,14 +195,31 @@ class EnhancedHeuristicPlayer(AIPlayer):
         by_rank: Callable[[Card], int],
         is_endgame: bool,
         played_cards: set[Card],
+        *,
+        hard_danger: set[str],
+        my_score: int,
     ) -> Move:
         trumps = [c for c in legal_cards if is_trump(c, trump_suit)]
         non_trumps = [c for c in legal_cards if not is_trump(c, trump_suit)]
 
-        # Danger player present: smoke them out with strongest trump
+        # Danger player present: smoke them out — but only with a strong trump.
+        # Enhancement 7: leading a weak trump forces allies to spend their own trump
+        # responding, depleting collective defence. Only suppress weak-trump lead when
+        # there is a genuine ≥20 pt danger AND I'm not close to winning myself (<15 pts).
         if danger_players:
             if trumps:
-                return PlayCard(card=min(trumps, key=by_rank))  # strongest trump
+                best_trump = min(trumps, key=by_rank)  # strongest trump held
+                e7_active = bool(hard_danger) and my_score < 15 and is_endgame
+                if trump_rank(best_trump, trump_suit) >= 9 or not e7_active:
+                    return PlayCard(card=best_trump)
+                # Weak trump + E7 active — prefer non-trump to preserve collective resource
+                if non_trumps:
+                    dominant = self._dominant_lead(non_trumps, played_cards, trump_suit, by_rank)
+                    if dominant is not None:
+                        return PlayCard(card=dominant)
+                    return PlayCard(card=max(non_trumps, key=by_rank))
+                # No non-trumps available — must lead trump regardless
+                return PlayCard(card=best_trump)
             return PlayCard(card=max(legal_cards, key=by_rank))
 
         # Enhancement 2: endgame — commit trump even without a danger player

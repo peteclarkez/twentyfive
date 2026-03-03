@@ -24,6 +24,16 @@ stages:
 - **Phase 3:** Partnership play and variants (45s, 110)
 - **Phase 4:** GUI (to be decided)
 
+## AI Players
+
+The project includes four AI implementations of increasing sophistication. See the
+[AI module docs](twentyfive/ai/) for full details:
+
+| Document | Description |
+|----------|-------------|
+| [AI_APPROACHES.md](twentyfive/ai/AI_APPROACHES.md) | Survey of AI approaches, design rationale, and implementation roadmap |
+| [BENCHMARKING.md](twentyfive/ai/BENCHMARKING.md) | Benchmark methodology, results, and cooperative game-length analysis |
+
 ## References
 
 The following sources were used to establish the rules and strategy documented in
