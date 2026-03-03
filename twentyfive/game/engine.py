@@ -35,15 +35,20 @@ class GameEngine:
         player_names: list[str],
         *,
         audit_dir: Path | None = Path("logs"),
+        initial_dealer: int = 0,
     ) -> None:
         if not 2 <= len(player_names) <= 6:
             raise ValueError(f"Twenty-Five requires 2–6 players, got {len(player_names)}")
         if len(set(player_names)) != len(player_names):
             raise ValueError("Player names must be unique")
+        if not 0 <= initial_dealer < len(player_names):
+            raise ValueError(
+                f"initial_dealer {initial_dealer} out of range for {len(player_names)} players"
+            )
 
         self._game_id: str = str(uuid.uuid4())
         self._players: list[Player] = [Player(name=n) for n in player_names]
-        self._dealer_index: int = 0
+        self._dealer_index: int = initial_dealer
         self._round_number: int = 1
 
         # These are set by _start_round()
@@ -55,6 +60,7 @@ class GameEngine:
         self._completed_tricks_this_round: list[tuple[TrickPlay, ...]] = []
         self._trick_number: int = 1
         self._rob_queue: list[int] = []  # indices of players still to act in rob phase
+        self._rob_this_round: tuple[str, Card] | None = None  # public: (player_name, card_taken)
 
         self._audit: GameAudit | None = (
             GameAudit(self._game_id, audit_dir) if audit_dir is not None else None
@@ -92,6 +98,7 @@ class GameEngine:
             round_number=self._round_number,
             game_id=self._game_id,
             legal_moves=legal,
+            rob_this_round=self._rob_this_round,
         )
 
     def apply_move(self, move: Move) -> None:
@@ -200,6 +207,7 @@ class GameEngine:
     def _start_round(self) -> None:
         """Shuffle, deal, turn up trump, compute rob queue, set phase."""
         self._completed_tricks_this_round = []
+        self._rob_this_round = None
 
         for player in self._players:
             player.clear_hand()
@@ -286,6 +294,7 @@ class GameEngine:
 
         if isinstance(move, Rob):
             player.remove_card(move.discard)
+            self._rob_this_round = (player.name, self._face_up_card)
             player.add_card(self._face_up_card)
             self._face_up_card = None
             # Only one rob per round — clear remaining queue

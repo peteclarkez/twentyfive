@@ -14,7 +14,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from twentyfive.cards.card import Card, Suit, is_trump
+from twentyfive.cards.card import Card, Rank, Suit, is_trump
 from twentyfive.game.engine import GameEngine
 from twentyfive.game.rules import card_global_rank, get_renegeable_cards, trick_winner
 from twentyfive.game.state import (
@@ -75,6 +75,11 @@ class CLI:
                     and state.phase in (Phase.TRICK, Phase.ROB)):
                 self._print_ai_action(state, move)
             self._engine.apply_move(move)
+
+        # After a rob (hidden mode), pause so the player can read the rob message
+        # before the screen clears for the next render.
+        if not self._show_all and isinstance(move, Rob):
+            self._wait_for_continue("  Press A or SPACE to continue...")
 
         # Show the final game state, then pause before the summary screen
         state = self._engine.get_state()
@@ -175,6 +180,25 @@ class CLI:
             )
             if show_hand:
                 hand_str = "  ".join(_colour_card(c, state.trump_suit) for c in player.hand)
+            elif state.rob_this_round and state.rob_this_round[0] == player.name:
+                # Build the set of cards publicly known to be in this player's hand:
+                #   • the face-up card they took (card_taken)
+                #   • for a non-dealer rob: the Ace of Trump they revealed as eligibility
+                rob_name, card_taken = state.rob_this_round
+                rob_idx = next(
+                    i for i, p in enumerate(state.players) if p.name == rob_name
+                )
+                publicly_known: set[Card] = set()
+                if card_taken in player.hand:
+                    publicly_known.add(card_taken)
+                if rob_idx != state.dealer_index:
+                    ace_of_trump = Card(Rank.ACE, state.trump_suit)
+                    if ace_of_trump in player.hand:
+                        publicly_known.add(ace_of_trump)
+                hand_str = "  ".join(
+                    _colour_card(c, state.trump_suit) if c in publicly_known else "??"
+                    for c in player.hand
+                ) + f"  ({player.hand_size} cards)"
             else:
                 hand_str = "  ".join("??" for _ in player.hand) + f"  ({player.hand_size} cards)"
             print(f"  {marker}{player.name:<12}  {hand_str}")
@@ -223,7 +247,7 @@ class CLI:
         elif isinstance(move, Rob):
             face_up = state.face_up_card
             card_str = _colour_card(face_up, state.trump_suit) if face_up else "the face-up card"
-            print(f"  {name} robs ({card_str})")
+            print(f"  {name} robs — takes {card_str}")
         elif isinstance(move, PassRob):
             # Only mention if they had a real choice (could have robbed)
             if any(isinstance(m, Rob) for m in state.legal_moves):
@@ -280,7 +304,13 @@ class CLI:
         print()
 
         idx = self._get_int_input(f"  Discard card (1-{len(hand_cards)}): ", 1, len(hand_cards))
-        return Rob(discard=hand_cards[idx - 1])
+        discard_card = hand_cards[idx - 1]
+        print()
+        print(
+            f"  Robbing — taking {face_up_coloured}, "
+            f"discarding {_colour_card(discard_card, state.trump_suit)}"
+        )
+        return Rob(discard=discard_card)
 
     def _prompt_trick(self, state: GameState) -> Move:
         """Prompt the current player to select a card to play."""

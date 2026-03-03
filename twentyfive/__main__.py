@@ -51,17 +51,17 @@ def _prompt_ai_players(names: list[str], engine: GameEngine) -> dict[str, AIPlay
     print()
     for name in names:
         while True:
-            raw = input(f"  {name}: (H/R/A/E/M) [H]: ").strip().upper()
-            if not raw or raw == "H":
+            raw = input(f"  {name}: (H/R/A/E/M) [E]: ").strip().upper()
+            if not raw or raw == "E":
+                ai_players[name] = EnhancedHeuristicPlayer()
+                break
+            if raw == "H":
                 break
             if raw == "R":
                 ai_players[name] = RandomPlayer()
                 break
             if raw == "A":
                 ai_players[name] = HeuristicPlayer()
-                break
-            if raw == "E":
-                ai_players[name] = EnhancedHeuristicPlayer()
                 break
             if raw == "M":
                 ai_players[name] = MCTSPlayer(engine)
@@ -88,6 +88,27 @@ def _build_player_types(names: list[str], ai_players: dict[str, AIPlayer]) -> di
     return result
 
 
+def _setup_quick_1v3(
+    human_name: str,
+) -> tuple[GameEngine, dict[str, AIPlayer], list[str]]:
+    """
+    Build a 4-player game: human vs 3 Enhanced AI opponents.
+
+    The human's seat and the first dealer are both chosen at random.
+    Returns (engine, ai_players_dict, ordered_player_names).
+    """
+    available = [n for n in _NAME_BANK if n.lower() != human_name.lower()]
+    ai_names = random.sample(available, 3)
+
+    all_names = ai_names + [human_name]
+    random.shuffle(all_names)   # randomise seat order (human position is random)
+
+    initial_dealer = random.randrange(4)
+    engine = GameEngine(player_names=all_names, initial_dealer=initial_dealer)
+    ai_players = {name: EnhancedHeuristicPlayer() for name in ai_names}
+    return engine, ai_players, all_names
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Twenty-Five card game")
     parser.add_argument(
@@ -95,19 +116,43 @@ def main() -> None:
         action="store_true",
         help="Show all players' hands (master view). Default: hidden-hand mode.",
     )
+    parser.add_argument(
+        "--1v3",
+        dest="one_v_three",
+        metavar="NAME",
+        help="Quick setup: you (NAME) vs 3 Enhanced AI opponents with random seats.",
+    )
     args = parser.parse_args()
 
     print("Welcome to Twenty-Five!")
     print()
-    n = _prompt_player_count()
-    names = _prompt_player_names(n)
-    print()
-    engine = GameEngine(player_names=names)
-    ai_players = _prompt_ai_players(names, engine)
 
-    human_names = [name for name in names if name not in ai_players]
-    # All-AI: no human to protect; show all hands for spectating
-    show_all = args.seeall or len(human_names) == 0
+    if args.one_v_three:
+        human_name = args.one_v_three
+        engine, ai_players, names = _setup_quick_1v3(human_name)
+
+        state = engine.get_state()
+        dealer_name = state.players[state.dealer_index].name
+        seat_num = next(i + 1 for i, p in enumerate(state.players) if p.name == human_name)
+        opponent_names = ", ".join(n for n in names if n != human_name)
+
+        print(f"  Playing as : {human_name}  (seat {seat_num} of 4)")
+        print(f"  Opponents  : {opponent_names}  (Enhanced AI)")
+        print(f"  First deal : {dealer_name}")
+        print()
+
+        human_names = [human_name]
+        show_all = args.seeall
+    else:
+        n = _prompt_player_count()
+        names = _prompt_player_names(n)
+        print()
+        initial_dealer = random.randrange(n)
+        engine = GameEngine(player_names=names, initial_dealer=initial_dealer)
+        ai_players = _prompt_ai_players(names, engine)
+
+        human_names = [name for name in names if name not in ai_players]
+        show_all = args.seeall or len(human_names) == 0
 
     player_types = _build_player_types(names, ai_players)
     engine.record_game_start(player_types)

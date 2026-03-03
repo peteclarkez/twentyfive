@@ -148,6 +148,40 @@ class TestRobPhase:
         robbing_player = new_state.players[rob_idx]
         assert robbing_player.hand_size == 5
 
+    def test_rob_this_round_records_taken_card(self) -> None:
+        """After a rob, rob_this_round holds (player_name, face_up_card)."""
+        engine, rob_idx = self._make_engine_where_player_can_rob()
+        state = engine.get_state()
+        face_up = state.face_up_card
+        assert face_up is not None
+        assert state.rob_this_round is None
+
+        rob_moves = [m for m in state.legal_moves if isinstance(m, Rob)]
+        assert rob_moves
+        engine.apply_move(rob_moves[0])
+        new_state = engine.get_state()
+
+        assert new_state.rob_this_round is not None
+        rob_name, rob_card = new_state.rob_this_round
+        assert rob_name == state.players[rob_idx].name
+        assert rob_card == face_up
+        assert rob_card in new_state.players[rob_idx].hand
+
+    def test_rob_this_round_cleared_on_new_round(self) -> None:
+        """rob_this_round is cleared when the next round starts."""
+        engine, _ = self._make_engine_where_player_can_rob()
+        state = engine.get_state()
+        rob_moves = [m for m in state.legal_moves if isinstance(m, Rob)]
+        assert rob_moves
+        engine.apply_move(rob_moves[0])
+        assert engine.get_state().rob_this_round is not None
+
+        # Play through the rest of the round, then confirm to start the next
+        while engine.get_state().phase not in (Phase.ROUND_END, Phase.GAME_OVER):
+            engine.apply_move(engine.get_state().legal_moves[0])
+        engine.apply_move(ConfirmRoundEnd())
+        assert engine.get_state().rob_this_round is None
+
     def test_rob_clears_remaining_eligible_players(self) -> None:
         """Once a rob occurs, no one else gets to rob."""
         engine, _ = self._make_engine_where_player_can_rob()

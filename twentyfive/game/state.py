@@ -86,6 +86,9 @@ class GameState:
     round_number: int
     game_id: str
     legal_moves: tuple[Move, ...]
+    # Public information: which player robbed this round, and which card they took.
+    # None if no rob has occurred this round. Cleared at the start of each new round.
+    rob_this_round: tuple[str, Card] | None = None
 
     @property
     def current_player(self) -> PlayerSnapshot:
