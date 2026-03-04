@@ -45,7 +45,14 @@ a human or an AI. Press **Enter** to accept the defaults.
 | | |
 |---|---|
 | ![Trick in progress](images/cli-v1-round-in-progress.png) | ![Round complete](images/cli-v1-round-complete.png) |
-| *Trick 5/5 — Peter's turn to play his last card* | *Round complete — full trick history and scores* |
+| *CLI Trick 5/5 — Peter's turn to play his last card* | *Round complete — full trick history and scores* |
+
+
+| | |
+|---|---|
+| ![Trick in progress](images/tacticalui-round-in-progress.png) | ![Round complete](images/tacticalui-round-complete.png) |
+| *Trick 4/5 — Frank playing his 4th card* | *Round complete — full trick history and scores* |
+
 
 ### Desktop GUI (pygame)
 
