@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import random
+import sys
 
 from twentyfive.ai.enhanced_heuristic import EnhancedHeuristicPlayer
 from twentyfive.ai.heuristic import HeuristicPlayer
 from twentyfive.ai.ismcts import ISMCTSPlayer
 from twentyfive.ai.player import AIPlayer, RandomPlayer
 from twentyfive.game.engine import GameEngine
-from twentyfive.ui.cli import CLI
+from twentyfive.ui.controller import GameController
 
 _NAME_BANK = [
     "Alice", "Bob", "Carol", "Dave", "Eve", "Frank",
@@ -122,6 +124,16 @@ def main() -> None:
         metavar="NAME",
         help="Quick setup: you (NAME) vs 3 Enhanced AI opponents with random seats.",
     )
+    parser.add_argument(
+        "--ui",
+        default="cli",
+        metavar="MODULE",
+        help=(
+            "UI module to use (default: cli). "
+            "Must be a module under twentyfive/ui/ that exports a launch() function. "
+            "Example: --ui pygame_ui"
+        ),
+    )
     args = parser.parse_args()
 
     print("Welcome to Twenty-Five!")
@@ -157,7 +169,27 @@ def main() -> None:
     player_types = _build_player_types(names, ai_players)
     engine.record_game_start(player_types)
 
-    CLI(engine, ai_players=ai_players, show_all=show_all).run()
+    controller = GameController(engine, ai_players)
+
+    ui_name = args.ui
+    try:
+        ui_mod = importlib.import_module(f"twentyfive.ui.{ui_name}")
+    except ModuleNotFoundError:
+        print(f"Unknown UI module: {ui_name!r}")
+        print("Available built-in UIs: cli, pygame_ui")
+        sys.exit(1)
+
+    if not hasattr(ui_mod, "launch"):
+        print(f"UI module {ui_name!r} has no launch() function.")
+        print("See twentyfive/ui/UI_DEVELOPMENT.md for the interface contract.")
+        sys.exit(1)
+
+    try:
+        ui_mod.launch(controller, show_all=show_all)
+    except ImportError as exc:
+        print(f"UI module {ui_name!r} is missing a dependency: {exc}")
+        print("For pygame_ui run: pip install -e '.[gui]'")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

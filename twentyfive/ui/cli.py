@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from twentyfive.cards.card import Card, Rank, Suit, is_trump
-from twentyfive.game.engine import GameEngine
 from twentyfive.game.rules import card_global_rank, get_renegeable_cards, trick_winner
 from twentyfive.game.state import (
     ConfirmRoundEnd,
@@ -27,9 +25,7 @@ from twentyfive.game.state import (
     Rob,
     TrickPlay,
 )
-
-if TYPE_CHECKING:
-    from twentyfive.ai.player import AIPlayer
+from twentyfive.ui.controller import GameController
 
 # ---------------------------------------------------------------------------
 # Colour helpers
@@ -54,46 +50,45 @@ def _colour_card(card: Card, trump_suit: Suit | None = None) -> str:
 class CLI:
     def __init__(
         self,
-        engine: GameEngine,
-        ai_players: dict[str, AIPlayer] | None = None,
+        controller: GameController,
         *,
         show_all: bool = False,  # False = hidden-hand (default); True = master view
     ) -> None:
-        self._engine = engine
-        self._ai_players: dict[str, AIPlayer] = ai_players or {}
+        self._ctrl = controller
         self._show_all = show_all
 
     def run(self) -> None:
         """Main game loop."""
-        while not self._engine.is_game_over:
-            state = self._engine.get_state()
-            if self._should_render(state):
-                self._render(state)
-            move = self._prompt_move(state)
-            if (not self._show_all
-                    and state.current_player.name in self._ai_players
-                    and state.phase in (Phase.TRICK, Phase.ROB)):
-                self._print_ai_action(state, move)
-            self._engine.apply_move(move)
+        last_move: Move | None = None
+
+        while not self._ctrl.is_game_over:
+            state = self._ctrl.state
+
+            if self._ctrl.is_ai_turn():
+                # Master view: render the board before the AI plays
+                if self._show_all:
+                    self._render(state)
+                prev_state = state
+                actor, last_move, state = self._ctrl.step_ai()
+                if not self._show_all and prev_state.phase in (Phase.TRICK, Phase.ROB):
+                    self._print_ai_action(actor, last_move, prev_state)
+            else:
+                # Human turn: always render, then prompt
+                if state.phase != Phase.ROUND_END or self._show_all:
+                    self._render(state)
+                last_move = self._prompt_human(state)
+                state = self._ctrl.apply_move(last_move)
 
         # After a rob (hidden mode), pause so the player can read the rob message
         # before the screen clears for the next render.
-        if not self._show_all and isinstance(move, Rob):
+        if not self._show_all and isinstance(last_move, Rob):
             self._wait_for_continue("  Press A or SPACE to continue...")
 
         # Show the final game state, then pause before the summary screen
-        state = self._engine.get_state()
+        state = self._ctrl.state
         self._render(state)
         self._wait_for_continue("  Press A or SPACE to see the final results...")
         self._render_game_over(state)
-
-    def _should_render(self, state: GameState) -> bool:
-        if self._show_all:
-            return True  # master mode: always render
-        return (
-            state.current_player.name not in self._ai_players
-            or state.phase == Phase.ROUND_END
-        )
 
     # ------------------------------------------------------------------
     # Rendering
@@ -186,7 +181,7 @@ class CLI:
                 #   • for a non-dealer rob: the Ace of Trump they revealed as eligibility
                 rob_name, card_taken = state.rob_this_round
                 rob_idx = next(
-                    i for i, p in enumerate(state.players) if p.name == rob_name
+                    j for j, p in enumerate(state.players) if p.name == rob_name
                 )
                 publicly_known: set[Card] = set()
                 if card_taken in player.hand:
@@ -224,37 +219,36 @@ class CLI:
     # Input
     # ------------------------------------------------------------------
 
-    def _prompt_move(self, state: GameState) -> Move:
+    def _prompt_human(self, state: GameState) -> Move:
+        """Prompt the current human player for their move."""
         # In hidden mode, ROUND_END is always handled by a human keypress — an AI
         # current player would return ConfirmRoundEnd instantly, skipping the summary.
-        if state.phase == Phase.ROUND_END and not self._show_all:
-            return self._prompt_round_end(state)
-        current_name = state.current_player.name
-        if current_name in self._ai_players:
-            return self._ai_players[current_name].choose_move(state)
-        if state.phase == Phase.ROB:
-            return self._prompt_rob(state)
         if state.phase == Phase.ROUND_END:
             return self._prompt_round_end(state)
+        if state.phase == Phase.ROB:
+            return self._prompt_rob(state)
         return self._prompt_trick(state)
 
-    def _print_ai_action(self, state: GameState, move: Move) -> None:
+    def _print_ai_action(self, actor: str, move: Move, prev_state: GameState) -> None:
         """Print a one-line summary of an AI move (hidden mode only, no screen clear)."""
-        name = state.current_player.name
-        assert state.trump_suit is not None
+        trump = prev_state.trump_suit
+        assert trump is not None
         if isinstance(move, PlayCard):
-            print(f"  {name} plays {_colour_card(move.card, state.trump_suit)}")
+            print(f"  {actor} plays {_colour_card(move.card, trump)}")
         elif isinstance(move, Rob):
-            face_up = state.face_up_card
-            card_str = _colour_card(face_up, state.trump_suit) if face_up else "the face-up card"
-            print(f"  {name} robs — takes {card_str}")
+            new_state = self._ctrl.state
+            taken = new_state.rob_this_round[1] if new_state.rob_this_round else None
+            card_str = _colour_card(taken, trump) if taken else "the face-up card"
+            print(f"  {actor} robs — takes {card_str}")
         elif isinstance(move, PassRob):
             # Only mention if they had a real choice (could have robbed)
-            if any(isinstance(m, Rob) for m in state.legal_moves):
-                print(f"  {name} passes")
+            if any(isinstance(m, Rob) for m in prev_state.legal_moves):
+                print(f"  {actor} passes")
 
     def _prompt_round_end(self, state: GameState) -> ConfirmRoundEnd:
         """Show round summary and wait for the player to continue."""
+        if not self._show_all:
+            self._render(state)
         print(f"  Round {state.round_number} complete.")
         print()
         self._wait_for_continue("  Press A or SPACE to deal the next hand...")
@@ -422,3 +416,13 @@ class CLI:
 
     def _clear(self) -> None:
         os.system("clear" if os.name != "nt" else "cls")
+
+
+# ---------------------------------------------------------------------------
+# Module-level entry point for the --ui loader
+# ---------------------------------------------------------------------------
+
+
+def launch(controller: GameController, *, show_all: bool = False) -> None:
+    """Run the CLI. Blocks until the game ends or the user quits."""
+    CLI(controller, show_all=show_all).run()
