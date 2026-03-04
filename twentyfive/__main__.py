@@ -13,10 +13,26 @@ from twentyfive.game.engine import GameEngine
 from twentyfive.ui.controller import GameController
 
 _NAME_BANK = [
-    "Alice", "Bob", "Carol", "Dave", "Eve", "Frank",
-    "Grace", "Hank", "Iris", "Jack", "Kate", "Leo",
-    "Mia", "Ned", "Olive", "Pete", "Quinn", "Rose",
-    "Sam", "Tara",
+    "Alice",
+    "Bob",
+    "Carol",
+    "Dave",
+    "Eve",
+    "Frank",
+    "Grace",
+    "Hank",
+    "Iris",
+    "Jack",
+    "Kate",
+    "Leo",
+    "Mia",
+    "Ned",
+    "Olive",
+    "Pete",
+    "Quinn",
+    "Rose",
+    "Sam",
+    "Tara",
 ]
 
 _DEFAULT_PLAYER_COUNT = 4
@@ -90,6 +106,21 @@ def _build_player_types(names: list[str], ai_players: dict[str, AIPlayer]) -> di
     return result
 
 
+def _ai_player_from_type_str(type_str: str, engine: GameEngine) -> AIPlayer | None:
+    """Convert a type label (from setup_game) to an AIPlayer, or None for Human."""
+    match type_str:
+        case "Human":
+            return None
+        case "Random":
+            return RandomPlayer()
+        case "Heuristic":
+            return HeuristicPlayer()
+        case "ISMCTS":
+            return ISMCTSPlayer(engine)
+        case _:  # "Enhanced" or anything unknown
+            return EnhancedHeuristicPlayer()
+
+
 def _setup_quick_1v3(
     human_name: str,
 ) -> tuple[GameEngine, dict[str, AIPlayer], list[str]]:
@@ -103,7 +134,7 @@ def _setup_quick_1v3(
     ai_names = random.sample(available, 3)
 
     all_names = ai_names + [human_name]
-    random.shuffle(all_names)   # randomise seat order (human position is random)
+    random.shuffle(all_names)  # randomise seat order (human position is random)
 
     initial_dealer = random.randrange(4)
     engine = GameEngine(player_names=all_names, initial_dealer=initial_dealer)
@@ -136,6 +167,24 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Load UI module early so setup_game() can be called if available.
+    ui_name = args.ui
+    try:
+        ui_mod = importlib.import_module(f"twentyfive.ui.{ui_name}")
+    except ModuleNotFoundError:
+        print(f"Unknown UI module: {ui_name!r}")
+        print("Available built-in UIs: cli, pygame_ui, tactical_ui")
+        sys.exit(1)
+    except ImportError as exc:
+        print(f"UI module {ui_name!r} is missing a dependency: {exc}")
+        print("For pygame_ui / tactical_ui run: pip install -e '.[gui]'")
+        sys.exit(1)
+
+    if not hasattr(ui_mod, "launch"):
+        print(f"UI module {ui_name!r} has no launch() function.")
+        print("See twentyfive/ui/UI_DEVELOPMENT.md for the interface contract.")
+        sys.exit(1)
+
     print("Welcome to Twenty-Five!")
     print()
 
@@ -155,6 +204,27 @@ def main() -> None:
 
         human_names = [human_name]
         show_all = args.seeall
+
+    elif hasattr(ui_mod, "setup_game"):
+        # GUI setup lobby — the UI module handles player selection.
+        setup_result = ui_mod.setup_game()
+        if setup_result is None:
+            return  # user closed the window without starting
+
+        names, type_map = setup_result
+        n = len(names)
+        initial_dealer = random.randrange(n)
+        engine = GameEngine(player_names=names, initial_dealer=initial_dealer)
+
+        ai_players: dict[str, AIPlayer] = {}
+        for name, type_str in type_map.items():
+            player = _ai_player_from_type_str(type_str, engine)
+            if player is not None:
+                ai_players[name] = player
+
+        human_names = [name for name in names if name not in ai_players]
+        show_all = args.seeall or len(human_names) == 0
+
     else:
         n = _prompt_player_count()
         names = _prompt_player_names(n)
@@ -171,24 +241,11 @@ def main() -> None:
 
     controller = GameController(engine, ai_players)
 
-    ui_name = args.ui
-    try:
-        ui_mod = importlib.import_module(f"twentyfive.ui.{ui_name}")
-    except ModuleNotFoundError:
-        print(f"Unknown UI module: {ui_name!r}")
-        print("Available built-in UIs: cli, pygame_ui")
-        sys.exit(1)
-
-    if not hasattr(ui_mod, "launch"):
-        print(f"UI module {ui_name!r} has no launch() function.")
-        print("See twentyfive/ui/UI_DEVELOPMENT.md for the interface contract.")
-        sys.exit(1)
-
     try:
         ui_mod.launch(controller, show_all=show_all)
     except ImportError as exc:
         print(f"UI module {ui_name!r} is missing a dependency: {exc}")
-        print("For pygame_ui run: pip install -e '.[gui]'")
+        print("For pygame_ui / tactical_ui run: pip install -e '.[gui]'")
         sys.exit(1)
 
 
