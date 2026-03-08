@@ -424,6 +424,34 @@ def _draw_card_indicators(
 
 
 # ---------------------------------------------------------------------------
+# Corner-bracket border helper
+# ---------------------------------------------------------------------------
+
+_BRACKET_LEN = 14  # length of each corner arm (px)
+_BRACKET_T = 1  # line thickness
+
+
+def _draw_corner_border(
+    surf: pygame.Surface,
+    rect: pygame.Rect,
+    colour: tuple[int, int, int],
+) -> None:
+    """Draw bracket-style corner marks around *rect* — no full perimeter line."""
+    x, y = rect.x, rect.y
+    r, b = rect.right, rect.bottom
+    cl = _BRACKET_LEN
+    t = _BRACKET_T
+    for ox, oy, sx, sy in [
+        (x, y, 1, 1),  # top-left
+        (r, y, -1, 1),  # top-right
+        (x, b, 1, -1),  # bottom-left
+        (r, b, -1, -1),  # bottom-right
+    ]:
+        pygame.draw.line(surf, colour, (ox, oy), (ox + sx * cl, oy), t)
+        pygame.draw.line(surf, colour, (ox, oy), (ox, oy + sy * cl), t)
+
+
+# ---------------------------------------------------------------------------
 # TacticalUI — main class
 # ---------------------------------------------------------------------------
 
@@ -1134,9 +1162,10 @@ class TacticalUI:
             slot_rect = pygame.Rect(cx - _ARENA_CW // 2, cy - _ARENA_CH // 2, _ARENA_CW, _ARENA_CH)
 
             tp = played.get(player.name)
+            is_led = tp is not None and player.name == led_name
+            is_winning = tp is not None and player.name == winner_name
+
             if tp:
-                is_led = player.name == led_name
-                is_winning = player.name == winner_name
                 _draw_card_face(
                     self._screen,
                     slot_rect,
@@ -1147,11 +1176,7 @@ class TacticalUI:
                     is_led=is_led,
                     is_winning=is_winning,
                 )
-                # [LED] label
-                if is_led:
-                    lt = self._font_xs.render("[LED]", True, _GOLD)
-                    self._screen.blit(lt, lt.get_rect(centerx=cx, y=slot_rect.bottom + 2))
-                # [WINNING] badge
+                # [WINNING] badge above card
                 if is_winning:
                     p_factor = _pulse(self._t, 2.0)
                     wc = _blend(_EMERALD_D, _EMERALD, p_factor)
@@ -1160,14 +1185,27 @@ class TacticalUI:
                         wt, wt.get_rect(centerx=cx, y=slot_rect.top - wt.get_height() - 2)
                     )
             else:
-                # Empty slot
+                # Empty slot: dark filled background
                 pygame.draw.rect(self._screen, _BG_CARD, slot_rect, border_radius=6)
-                pygame.draw.rect(self._screen, _PANEL_BDR, slot_rect, 1, border_radius=6)
 
-            # Player name label below slot
+            # Corner bracket border — inflated 5 px outward so there's a gap around the card.
+            # Gold when this player led, muted otherwise.
+            bracket_col = _GOLD if is_led else _PANEL_BDR
+            bracket_rect = slot_rect.inflate(10, 10)  # 5 px gap on each side
+            _draw_corner_border(self._screen, bracket_rect, bracket_col)
+
+            # Player name in the gap at the bottom edge of the bracket border
             name_lbl = self._font_xs.render(player.name.upper(), True, _TEXT_MUT)
-            name_y = slot_rect.bottom + (20 if tp and state.current_trick else 4)
-            self._screen.blit(name_lbl, name_lbl.get_rect(centerx=cx, y=name_y))
+            # Erase a strip of the arena background behind the name to create the gap
+            gap_w = name_lbl.get_width() + 8
+            gap_rect = pygame.Rect(
+                cx - gap_w // 2,
+                bracket_rect.bottom - name_lbl.get_height() // 2,
+                gap_w,
+                name_lbl.get_height(),
+            )
+            pygame.draw.rect(self._screen, _BG_DARK, gap_rect)
+            self._screen.blit(name_lbl, name_lbl.get_rect(centerx=cx, centery=bracket_rect.bottom))
 
     # ------------------------------------------------------------------
     # Hand panel (centre, lower half)
