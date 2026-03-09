@@ -37,8 +37,28 @@ python -m twentyfive --gui --ui tactical_ui --1v3 YourName --seeall
 | `A` | Auto-play (weakest winning card, or worst) |
 | `R` | Rob the face-up card |
 | `P` | Pass rob |
+| `M` | Toggle mute (indicator shown in header) |
 | `SPACE` | Skip trick/round overlay |
 | `ESC` | Quit |
+
+## Sound effects
+
+All sounds are procedurally synthesised at startup from Python's stdlib `array` module —
+no audio files or extra dependencies are needed.
+
+| Event | Sound |
+|-------|-------|
+| Card played (human or AI) | Short percussive thwack |
+| Trick complete | 3-note ascending arpeggio (C5 → E5 → G5) |
+| Round end overlay | 4-note chord swell |
+| Game over — winner | 5-note ascending fanfare |
+| Game over — not winner | 3-note descending resolve |
+| Rob taken (human or AI) | Low descending "whump" |
+| Illegal move / bad discard | Short buzzer |
+| Button pressed | Brief tick |
+
+Press `M` to mute/unmute. The current state is shown in the header as `[M] SOUND` or
+`[M] MUTE`. All sound generation is in `sounds.py` (`SoundManager` class).
 
 ## Public names
 

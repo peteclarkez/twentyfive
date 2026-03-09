@@ -76,6 +76,7 @@ from .constants import (
     _W,
 )
 from .setup import setup_game as setup_game  # re-export for __init__.py
+from .sounds import SoundManager
 from .widgets import (
     _Button,
     _auto_play_card,
@@ -138,6 +139,9 @@ class TacticalUI:
         self._bg: ProceduralBackground | None = None
         # Time when the game-over board-summary starts (-1 = not yet; -2 = waiting for anims).
         self._game_over_show_after: float = -1.0
+        self._game_over_sounded: bool = False  # ensures game-over sound fires only once
+        # Sound manager — initialised in run() after pygame.init()
+        self._sounds: SoundManager | None = None
 
     # ------------------------------------------------------------------
     # Entry point
@@ -158,6 +162,9 @@ class TacticalUI:
         self._font_sym_lg = pygame.font.SysFont("Arial", 36, bold=True)
         self._font_sym_xl = pygame.font.SysFont("Arial", 56, bold=True)
         self._font_sym_hand = pygame.font.SysFont("Arial", 56, bold=True)  # hand card centre
+
+        # Sound manager — built after pygame.init() so mixer is available
+        self._sounds = SoundManager()
 
         # Procedural background — baked after pygame.init()
         self._bg = ProceduralBackground(_W, _H)
@@ -187,6 +194,8 @@ class TacticalUI:
                     key = event.key
                     if key == pygame.K_ESCAPE:
                         running = False
+                    elif key == pygame.K_m and self._sounds is not None:
+                        self._sounds.toggle_mute()
                     elif key == pygame.K_SPACE:
                         # Space skips any active pause (including game-over pre-screen)
                         self._trick_pause_until = 0.0
@@ -242,10 +251,12 @@ class TacticalUI:
                     self._game_over_show_after = -2.0 if self._anims else self._t + 5.0
                     if self._game_over_show_after > 0:
                         self._round_pause_until = self._game_over_show_after
+                        self._fire_game_over_sound()
                 # Pending: animations just cleared — start the 5 s board summary now.
                 if self._game_over_show_after == -2.0 and not self._anims:
                     self._game_over_show_after = self._t + 5.0
                     self._round_pause_until = self._game_over_show_after
+                    self._fire_game_over_sound()
 
                 if self._game_over_show_after < 0:
                     # Still animating — draw the board normally (card in flight).
@@ -274,6 +285,8 @@ class TacticalUI:
                     self._frozen_trick = (
                         state.completed_tricks[-1] if state.completed_tricks else None
                     )
+                    if self._sounds is not None:
+                        self._sounds.play_trick_win()
                     # Show trick-complete overlay for every trick (including the last)
                     if self._anims:
                         self._trick_pause_pending = True  # defer until flight lands
@@ -300,6 +313,8 @@ class TacticalUI:
                 ):
                     self._round_pause_pending = False
                     self._round_pause_until = self._t + 4.0
+                    if self._sounds is not None:
+                        self._sounds.play_round_end()
                 self._last_phase = state.phase
 
                 trick_pausing = self._t < self._trick_pause_until
@@ -358,6 +373,18 @@ class TacticalUI:
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _fire_game_over_sound(self) -> None:
+        """Play win or lose sound once when the game-over summary timer starts."""
+        if self._game_over_sounded or self._sounds is None:
+            return
+        self._game_over_sounded = True
+        state = self._ctrl.state
+        winner = max(state.players, key=lambda p: p.score)
+        if self._my_name is None or self._my_name == winner.name:
+            self._sounds.play_game_win()
+        else:
+            self._sounds.play_game_lose()
+
     def _on_ai_done(self, actor: str, move: Move) -> None:
         state = self._ctrl.state
         if isinstance(move, PlayCard):
@@ -367,9 +394,13 @@ class TacticalUI:
             target = self._arena_slot_centre(player_idx, len(state.players))
             start = (target[0], float(-_HAND_CH))
             self._launch_anim(move.card, player_idx, start, state)
+            if self._sounds is not None:
+                self._sounds.play_card_play()
         elif isinstance(move, Rob):
             taken = state.rob_this_round[1] if state.rob_this_round else "a card"
             self._status = f"{actor} robs — takes {taken}"
+            if self._sounds is not None:
+                self._sounds.play_rob()
         elif isinstance(move, PassRob):
             self._status = f"{actor} passes"
         else:
@@ -390,6 +421,8 @@ class TacticalUI:
 
         for btn in self._buttons:
             if btn.clicked(pos):
+                if self._sounds is not None:
+                    self._sounds.play_button_click()
                 self._handle_action(btn.action)
                 return
 
@@ -416,10 +449,14 @@ class TacticalUI:
                         self._selected = None
                         self._status = ""
                         self._ai_move_after = self._t + 1.0
+                        if self._sounds is not None:
+                            self._sounds.play_card_play()
                         if start is not None:
                             self._launch_anim(card, player_idx, start, state)
                     except ValueError:
                         self._status = "Invalid move — try again"
+                        if self._sounds is not None:
+                            self._sounds.play_error()
             case "auto":
                 auto_card = _auto_play_card(state)
                 if auto_card is not None:
@@ -434,6 +471,8 @@ class TacticalUI:
                     self._selected = None
                     self._status = ""
                     self._ai_move_after = self._t + 1.0
+                    if self._sounds is not None:
+                        self._sounds.play_card_play()
                     if start is not None:
                         self._launch_anim(card, player_idx, start, state)
             case "rob":
@@ -463,13 +502,19 @@ class TacticalUI:
                 self._rob_choosing = False
                 self._status = ""
                 self._ai_move_after = self._t + 1.0
+                if self._sounds is not None:
+                    self._sounds.play_rob()
             except ValueError:
                 self._status = "Cannot discard that card"
+                if self._sounds is not None:
+                    self._sounds.play_error()
             return
 
         if state.phase == Phase.TRICK:
             if card not in legal_cards:
                 self._status = "That card is not legal to play"
+                if self._sounds is not None:
+                    self._sounds.play_error()
                 return
             if self._selected == card:
                 start = self._hand_slot_centre(card)
@@ -479,6 +524,8 @@ class TacticalUI:
                 self._ctrl.apply_move(PlayCard(card))
                 self._selected = None
                 self._status = ""
+                if self._sounds is not None:
+                    self._sounds.play_card_play()
                 if start is not None:
                     self._launch_anim(card, player_idx, start, state)
             else:
@@ -647,9 +694,14 @@ class TacticalUI:
             border_radius=8,
         )
 
-        # Left: Game ID
+        # Left: Game ID + mute indicator
         gid = self._font_mono.render(f"GAME ID: {state.game_id[:8]}", True, _TEXT_MUT)
         self._screen.blit(gid, (16, (_HDR_H - gid.get_height()) // 2))
+        if self._sounds is not None:
+            mute_label = "[M] MUTE" if self._sounds.muted else "[M] SOUND"
+            mute_col = _DANGER if self._sounds.muted else _TEXT_MUT
+            ms = self._font_xs.render(mute_label, True, mute_col)
+            self._screen.blit(ms, (16, (_HDR_H - gid.get_height()) // 2 + gid.get_height() + 2))
 
         # Centre: Round | Trick
         if state.phase == Phase.ROUND_END:
