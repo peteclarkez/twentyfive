@@ -121,22 +121,24 @@ def _ai_player_from_type_str(type_str: str, engine: GameEngine) -> AIPlayer | No
             return EnhancedHeuristicPlayer()
 
 
-def _setup_quick_1v3(
+def _setup_quick_1vN(
     human_name: str,
+    n_opponents: int,
 ) -> tuple[GameEngine, dict[str, AIPlayer], list[str]]:
     """
-    Build a 4-player game: human vs 3 Enhanced AI opponents.
+    Build an (n_opponents + 1)-player game: human vs n_opponents Enhanced AI.
 
     The human's seat and the first dealer are both chosen at random.
     Returns (engine, ai_players_dict, ordered_player_names).
     """
     available = [n for n in _NAME_BANK if n.lower() != human_name.lower()]
-    ai_names = random.sample(available, 3)
+    ai_names = random.sample(available, n_opponents)
 
     all_names = ai_names + [human_name]
     random.shuffle(all_names)  # randomise seat order (human position is random)
 
-    initial_dealer = random.randrange(4)
+    n_total = n_opponents + 1
+    initial_dealer = random.randrange(n_total)
     engine = GameEngine(player_names=all_names, initial_dealer=initial_dealer)
     ai_players: dict[str, AIPlayer] = {name: EnhancedHeuristicPlayer() for name in ai_names}
     return engine, ai_players, all_names
@@ -154,6 +156,12 @@ def main() -> None:
         dest="one_v_three",
         metavar="NAME",
         help="Quick setup: you (NAME) vs 3 Enhanced AI opponents with random seats.",
+    )
+    parser.add_argument(
+        "--1v5",
+        dest="one_v_five",
+        metavar="NAME",
+        help="Quick setup: you (NAME) vs 5 Enhanced AI opponents with random seats (6 players).",
     )
     parser.add_argument(
         "--ui",
@@ -190,14 +198,33 @@ def main() -> None:
 
     if args.one_v_three:
         human_name = args.one_v_three
-        engine, ai_players, names = _setup_quick_1v3(human_name)
+        engine, ai_players, names = _setup_quick_1vN(human_name, 3)
 
         state = engine.get_state()
+        n_total = len(names)
         dealer_name = state.players[state.dealer_index].name
         seat_num = next(i + 1 for i, p in enumerate(state.players) if p.name == human_name)
         opponent_names = ", ".join(n for n in names if n != human_name)
 
-        print(f"  Playing as : {human_name}  (seat {seat_num} of 4)")
+        print(f"  Playing as : {human_name}  (seat {seat_num} of {n_total})")
+        print(f"  Opponents  : {opponent_names}  (Enhanced AI)")
+        print(f"  First deal : {dealer_name}")
+        print()
+
+        human_names = [human_name]
+        show_all = args.seeall
+
+    elif args.one_v_five:
+        human_name = args.one_v_five
+        engine, ai_players, names = _setup_quick_1vN(human_name, 5)
+
+        state = engine.get_state()
+        n_total = len(names)
+        dealer_name = state.players[state.dealer_index].name
+        seat_num = next(i + 1 for i, p in enumerate(state.players) if p.name == human_name)
+        opponent_names = ", ".join(n for n in names if n != human_name)
+
+        print(f"  Playing as : {human_name}  (seat {seat_num} of {n_total})")
         print(f"  Opponents  : {opponent_names}  (Enhanced AI)")
         print(f"  First deal : {dealer_name}")
         print()
