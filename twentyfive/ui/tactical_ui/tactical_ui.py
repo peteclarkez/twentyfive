@@ -16,19 +16,13 @@ Requires pygame-ce:  pip install -e ".[gui]"
 
 from __future__ import annotations
 
-import dataclasses
-import math
 import threading
 from typing import TYPE_CHECKING
 
 import pygame
 
-from twentyfive.cards.card import Card, Suit, is_trump
-from twentyfive.game.rules import (
-    card_global_rank,
-    get_renegeable_cards,
-    trick_winner,
-)
+from twentyfive.cards.card import Card, Rank, Suit
+from twentyfive.game.rules import trick_winner
 from twentyfive.game.state import (
     ConfirmRoundEnd,
     GameState,
@@ -41,590 +35,64 @@ from twentyfive.game.state import (
     TrickPlay,
 )
 
+from .animation import FloatingCard, _CardAnim, _bezier, _ease_out
+from .bg import ProceduralBackground, _pulse
+from .constants import (
+    _ARENA_CH,
+    _ARENA_CONFIG,
+    _ARENA_CW,
+    _ARENA_H,
+    _ARENA_Y,
+    _BG_CARD,
+    _BG_DARK,
+    _BG_PANEL,
+    _CARD_GAP,
+    _CORNER,
+    _CTR_W,
+    _CTR_X,
+    _CYAN,
+    _DANGER,
+    _DIVIDER,
+    _EMERALD,
+    _EMERALD_D,
+    _GAP,
+    _GOLD,
+    _GOLD_D,
+    _H,
+    _HAND_CH,
+    _HAND_CW,
+    _HAND_H,
+    _HAND_Y,
+    _HDR_CARD_H,
+    _HDR_CARD_W,
+    _HDR_H,
+    _PANEL_BDR,
+    _SIDE_W,
+    _SMALL_CH,
+    _SMALL_CW,
+    _SUIT_COLOUR,
+    _TEXT_MUT,
+    _TEXT_PRI,
+    _W,
+)
+from .setup import setup_game as setup_game  # re-export for __init__.py
+from .widgets import (
+    _Button,
+    _auto_play_card,
+    _blend,
+    _compute_tags,
+    _draw_card_back,
+    _draw_card_face,
+    _draw_card_indicators,
+    _draw_corner_border,
+    _draw_rank_badge,
+)
+
 if TYPE_CHECKING:
     from twentyfive.ui.controller import GameController
 
-# ---------------------------------------------------------------------------
-# Window & layout constants
-# ---------------------------------------------------------------------------
-
-_W, _H = 1200, 800
-
-_HDR_H = 72  # taller to hold face-up card thumbnail
-_SIDE_W = 220  # left and right sidebar width
-_CTR_W = _W - 2 * _SIDE_W  # 760 px centre column
-_CTR_X = _SIDE_W
-_ARENA_Y = _HDR_H
-_ARENA_H = 340
-_HAND_Y = _HDR_H + _ARENA_H
-_HAND_H = _H - _HAND_Y  # 400 px
-
-# ---------------------------------------------------------------------------
-# Card sizes
-# ---------------------------------------------------------------------------
-
-_HAND_CW, _HAND_CH = 90, 126  # large hand cards
-_ARENA_CW, _ARENA_CH = 70, 98  # arena / trick slot cards
-_SMALL_CW, _SMALL_CH = 44, 62  # small (scorecard / opponent row)
-_TRICK_CW, _TRICK_CH = 44, 62  # trick-zone history cards
-_HDR_CARD_W, _HDR_CARD_H = 32, 45  # tiny face-up card in header
-_CARD_GAP = 14
-_CORNER = 8
-_GAP = 4  # transparent gap between layout sections (lets background show through)
-
-# ---------------------------------------------------------------------------
-# Colour palette
-# ---------------------------------------------------------------------------
-
-_BG_DARK = (18, 18, 30)
-_BG_PANEL = (30, 30, 48)
-_BG_CARD = (42, 42, 64)
-_EMERALD = (80, 200, 120)
-_EMERALD_D = (40, 120, 70)
-_GOLD = (255, 191, 0)
-_GOLD_D = (160, 110, 0)
-_CYAN = (30, 210, 255)
-_RED_SUIT = (232, 64, 64)
-_BLK_SUIT = (200, 200, 210)
-_CARD_FACE = (248, 244, 236)
-_CARD_BACK = (28, 40, 100)
-_TEXT_PRI = (232, 232, 240)
-_TEXT_MUT = (120, 120, 144)
-_PANEL_BDR = (60, 60, 90)
-_DIVIDER = (50, 50, 76)
-_DANGER = (232, 64, 64)
-
-_SUIT_COLOUR: dict[Suit, tuple[int, int, int]] = {
-    Suit.HEARTS: _RED_SUIT,
-    Suit.DIAMONDS: (220, 100, 20),
-    Suit.CLUBS: (80, 160, 80),
-    Suit.SPADES: (80, 100, 210),
-}
-
 # Custom pygame event posted by the AI worker thread
 _AI_DONE = pygame.USEREVENT + 1
-
-# ---------------------------------------------------------------------------
-# Arena slot layout — clockwise from top-left for each player count.
-# Each entry: (grid_cols, grid_rows, [(col, row), ...] in clockwise order)
-# ---------------------------------------------------------------------------
-
-_ARENA_CONFIG: dict[int, tuple[int, int, list[tuple[int, int]]]] = {
-    2: (2, 1, [(0, 0), (1, 0)]),
-    3: (2, 2, [(0, 0), (1, 0), (1, 1)]),
-    4: (2, 2, [(0, 0), (1, 0), (1, 1), (0, 1)]),  # TL → TR → BR → BL
-    5: (3, 2, [(0, 0), (1, 0), (2, 0), (2, 1), (0, 1)]),  # TL → TM → TR → BR → BL
-    6: (3, 2, [(0, 0), (1, 0), (2, 0), (2, 1), (1, 1), (0, 1)]),  # full perimeter
-}
-
-# ---------------------------------------------------------------------------
-# Setup screen constants
-# ---------------------------------------------------------------------------
-
-_SETUP_NAMES = [
-    "Alice",
-    "Bob",
-    "Carol",
-    "Dave",
-    "Eve",
-    "Frank",
-    "Grace",
-    "Hank",
-    "Iris",
-    "Jack",
-    "Kate",
-    "Leo",
-]
-_SETUP_AI_TYPES = ["Human", "Random", "Heuristic", "Enhanced", "ISMCTS"]
-
-
-# ---------------------------------------------------------------------------
-# Utility: pulse factor in [0, 1] driven by elapsed time
-# ---------------------------------------------------------------------------
-
-
-def _pulse(t: float, speed: float = 2.5) -> float:
-    """Return a value in [0.0, 1.0] that oscillates with the given speed (Hz)."""
-    return (math.sin(t * speed * math.pi * 2) + 1) / 2
-
-
-# ---------------------------------------------------------------------------
-# Procedural background — value-noise lava-lamp
-# ---------------------------------------------------------------------------
-
-_BG_NOISE_PALETTE: list[tuple[int, int, int]] = [
-    (10, 26, 18),  # 0.0 — Slate
-    (19, 58, 42),  # 0.5 — Deep Teal
-    (80, 200, 120),  # 1.0 — Emerald Green
-]
-
-
-def _noise_colour(v: float) -> tuple[int, int, int]:
-    """Map noise value v ∈ [0,1] to an RGB colour via a two-segment gradient."""
-    if v <= 0.5:
-        t = v * 2.0
-        a, b = _BG_NOISE_PALETTE[0], _BG_NOISE_PALETTE[1]
-    else:
-        t = (v - 0.5) * 2.0
-        a, b = _BG_NOISE_PALETTE[1], _BG_NOISE_PALETTE[2]
-    return (
-        int(a[0] + (b[0] - a[0]) * t),
-        int(a[1] + (b[1] - a[1]) * t),
-        int(a[2] + (b[2] - a[2]) * t),
-    )
-
-
-class ProceduralBackground:
-    """
-    Low-resolution value-noise background with an animated lava-lamp flow.
-
-    A 128×128 tile is baked once at startup using an 8×8 control grid and
-    bilinear + smoothstep interpolation.  Each frame a 64×64 window is sampled
-    from that tile at an offset driven by math.sin / math.cos, then upscaled
-    to fill the window.
-    """
-
-    _GRID = 8  # coarse control-grid resolution
-    _TILE = 128  # baked tile size (must be ≥ 2 × SIZE)
-    _SIZE = 64  # displayed sample window size
-
-    def __init__(self, w: int, h: int, seed: int = 42) -> None:
-        self._w, self._h = w, h
-        self._tile = self._bake_tile(seed)
-
-    def _bake_tile(self, seed: int) -> pygame.Surface:
-        import random
-
-        rng = random.Random(seed)
-        G = self._GRID
-        N = self._TILE
-        # Control grid: (G+1)×(G+1) so tiling wraps cleanly
-        grid = [[rng.random() for _ in range(G + 1)] for _ in range(G + 1)]
-        surf = pygame.Surface((N, N))
-        pa = pygame.PixelArray(surf)
-        for py in range(N):
-            for px in range(N):
-                gx = (px / N) * G
-                gy = (py / N) * G
-                ix, iy = int(gx), int(gy)
-                fx, fy = gx - ix, gy - iy
-                # Smoothstep for smoother blobs
-                sx = fx * fx * (3 - 2 * fx)
-                sy = fy * fy * (3 - 2 * fy)
-                v = (
-                    grid[iy][ix] * (1 - sx) * (1 - sy)
-                    + grid[iy][ix + 1] * sx * (1 - sy)
-                    + grid[iy + 1][ix] * (1 - sx) * sy
-                    + grid[iy + 1][ix + 1] * sx * sy
-                )
-                r, g, b = _noise_colour(v)
-                pa[px][py] = surf.map_rgb(r, g, b)
-        del pa
-        return surf
-
-    def draw(self, screen: pygame.Surface, t: float) -> None:
-        amplitude = 28.0
-        ox_f = (math.sin(t * 0.12) * amplitude) % self._SIZE
-        oy_f = (math.cos(t * 0.08) * amplitude) % self._SIZE
-        ox_i = int(ox_f)
-        oy_i = int(oy_f)
-        frac_x = ox_f - ox_i  # fractional tile-pixel remainder [0, 1)
-        frac_y = oy_f - oy_i
-
-        # Sample one extra pixel each way so the fractional shift has data to blend into.
-        # ox_i max = SIZE-1, so ox_i + SIZE + 1 <= TILE is always safe.
-        sample = self._tile.subsurface(pygame.Rect(ox_i, oy_i, self._SIZE + 1, self._SIZE + 1))
-
-        # Upscale with one tile-pixel of headroom to absorb the fractional offset.
-        px_w = self._w / self._SIZE  # screen pixels per tile pixel (≈18.75)
-        px_h = self._h / self._SIZE  # screen pixels per tile pixel (≈12.5)
-        bg = pygame.transform.smoothscale(
-            sample, (int(self._w + px_w + 1), int(self._h + px_h + 1))
-        )
-
-        # Shift by the sub-pixel fraction: moves 1 screen-px at a time instead of 19.
-        screen.blit(bg, (-int(frac_x * px_w), -int(frac_y * px_h)))
-
-
-# ---------------------------------------------------------------------------
-# Floating card physics — per-slot bob + mouse-reactive tilt
-# ---------------------------------------------------------------------------
-
-
-class FloatingCard:
-    """Per-card animated display state: sine-wave bobbing + mouse-reactive tilt with lerp."""
-
-    BOB_SPEED = 0.003  # radians per millisecond
-    LERP = 0.12  # smoothing factor per frame
-
-    def __init__(self, slot_idx: int) -> None:
-        self._phase = slot_idx * 0.8  # stagger so cards don't sync
-        self._bob_y: float = 0.0
-        self.scale: float = 1.0
-        self.rotation: float = 0.0
-        self._target_scale: float = 1.0
-        self._target_rot: float = 0.0
-
-    def update(
-        self,
-        ticks_ms: int,
-        mouse: tuple[int, int],
-        rect: pygame.Rect,
-        hovering: bool,
-    ) -> None:
-        t = ticks_ms * self.BOB_SPEED
-        self._bob_y = math.sin(t + self._phase) * 5.0
-        if hovering:
-            self._target_scale = 1.10
-            dx = mouse[0] - rect.centerx
-            self._target_rot = max(-15.0, min(15.0, dx * 0.05))
-        else:
-            self._target_scale = 1.0
-            self._target_rot = 0.0
-        self.scale += (self._target_scale - self.scale) * self.LERP
-        self.rotation += (self._target_rot - self.rotation) * self.LERP
-
-    @property
-    def bob_y(self) -> float:
-        return self._bob_y
-
-
-# ---------------------------------------------------------------------------
-# Bezier card-flight animation
-# ---------------------------------------------------------------------------
-
-
-@dataclasses.dataclass
-class _CardAnim:
-    card: Card
-    p0: tuple[float, float]  # start centre
-    p1: tuple[float, float]  # control point (arcs above mid)
-    p2: tuple[float, float]  # end centre (arena slot)
-    start_ms: int
-    duration_ms: int = 500
-    trump: "Suit | None" = None
-
-
-def _bezier(
-    p0: tuple[float, float],
-    p1: tuple[float, float],
-    p2: tuple[float, float],
-    t: float,
-) -> tuple[float, float]:
-    u = 1.0 - t
-    return (
-        u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
-        u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1],
-    )
-
-
-def _ease_out(t: float) -> float:
-    return 1.0 - (1.0 - t) ** 2
-
-
-# ---------------------------------------------------------------------------
-# Button helper
-# ---------------------------------------------------------------------------
-
-
-class _Button:
-    def __init__(
-        self,
-        rect: pygame.Rect,
-        label: str,
-        action: str,
-        *,
-        enabled: bool = True,
-        colour: tuple[int, int, int] = _BG_PANEL,
-        pulse_colour: tuple[int, int, int] | None = None,
-    ) -> None:
-        self.rect = rect
-        self.label = label
-        self.action = action
-        self.enabled = enabled
-        self._base_colour = colour
-        self._pulse_colour = pulse_colour
-
-    def draw(
-        self,
-        surf: pygame.Surface,
-        font: pygame.font.Font,
-        mouse: tuple[int, int],
-        t: float = 0.0,
-    ) -> None:
-        if not self.enabled:
-            col = _blend(_BG_PANEL, (20, 20, 28), 0.5)
-        elif self._pulse_colour and self.enabled:
-            col = _blend(self._base_colour, self._pulse_colour, _pulse(t))
-        elif self.rect.collidepoint(mouse):
-            col = _blend(self._base_colour, _TEXT_PRI, 0.2)
-        else:
-            col = self._base_colour
-
-        pygame.draw.rect(surf, col, self.rect, border_radius=6)
-        bdr = _TEXT_PRI if self.enabled else _TEXT_MUT
-        pygame.draw.rect(surf, bdr, self.rect, 1, border_radius=6)
-        txt_col = _TEXT_PRI if self.enabled else _TEXT_MUT
-        txt = font.render(self.label, True, txt_col)
-        surf.blit(txt, txt.get_rect(center=self.rect.center))
-
-    def clicked(self, pos: tuple[int, int]) -> bool:
-        return self.enabled and self.rect.collidepoint(pos)
-
-
-def _blend(
-    a: tuple[int, int, int],
-    b: tuple[int, int, int],
-    t: float,
-) -> tuple[int, int, int]:
-    """Linear interpolate between two RGB colours; t=0 → a, t=1 → b."""
-    return (
-        int(a[0] + (b[0] - a[0]) * t),
-        int(a[1] + (b[1] - a[1]) * t),
-        int(a[2] + (b[2] - a[2]) * t),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Strategic tag computation (mirrors CLI auto-play / hint logic)
-# ---------------------------------------------------------------------------
-
-
-def _compute_tags(
-    card: Card,
-    hand: list[Card],
-    legal_cards: set[Card],
-    current_trick: tuple[TrickPlay, ...],
-    trump: Suit,
-    led_card: Card | None,
-) -> list[str]:
-    """Return a list of short tag strings for a card in the human player's hand."""
-    tags: list[str] = []
-
-    # Rank badge handled separately; tags are strategic/status labels
-    if card not in legal_cards:
-        tags.append("ILLEGAL")
-        return tags
-
-    legal_list = [c for c in hand if c in legal_cards]
-
-    # WORST — weakest legal card
-    if legal_list:
-        worst = max(legal_list, key=lambda c: card_global_rank(c, trump))
-        if card == worst and len(legal_list) > 1:
-            tags.append("WORST")
-
-    # BEST — strongest card in hand
-    if hand:
-        best = min(hand, key=lambda c: card_global_rank(c, trump))
-        if card == best and len(hand) > 1:
-            tags.append("BEST")
-
-    # CAN WIN — this card would win the trick if played now.
-    # Simulate appending the card and check if it becomes the winner.
-    # Mirrors cli.py logic exactly (trick_winner handles all suit/trump rules).
-    if current_trick:
-        led_suit = current_trick[0].card.suit
-        sim = list(current_trick) + [TrickPlay(player_name="_sim", card=card)]
-        if trick_winner(sim, led_suit, trump).card == card:
-            tags.append("CAN WIN")
-
-    # RENEGE — top-3 trump that may legally be withheld on a trump lead
-    if led_card is not None:
-        renegeable = get_renegeable_cards(hand, led_card, trump)
-        if card in renegeable:
-            tags.append("RENEGE")
-
-    return tags
-
-
-def _auto_play_card(state: GameState) -> Card | None:
-    """
-    Choose the card to play for auto-play:
-    1. Worst of cards that CAN WIN the current trick.
-    2. Otherwise worst legal card overall.
-    Mirrors CLI [A] logic.
-    """
-    if state.trump_suit is None:
-        return None
-    trump = state.trump_suit
-    legal = [m.card for m in state.legal_moves if isinstance(m, PlayCard)]
-    if not legal:
-        return None
-
-    if state.current_trick:
-        led_suit = state.current_trick[0].card.suit
-        can_win = [
-            c
-            for c in legal
-            if trick_winner(
-                list(state.current_trick) + [TrickPlay(player_name="_sim", card=c)],
-                led_suit,
-                trump,
-            ).card
-            == c
-        ]
-        if can_win:
-            return max(can_win, key=lambda c: card_global_rank(c, trump))
-
-    return max(legal, key=lambda c: card_global_rank(c, trump))
-
-
-# ---------------------------------------------------------------------------
-# Card drawing primitives
-# ---------------------------------------------------------------------------
-
-
-def _draw_card_face(
-    surf: pygame.Surface,
-    rect: pygame.Rect,
-    card: Card,
-    trump: Suit,
-    font_rank: pygame.font.Font,
-    font_sym: pygame.font.Font,
-    *,
-    selected: bool = False,
-    hover: bool = False,
-    legal: bool = True,
-    is_led: bool = False,
-    is_winning: bool = False,
-    border_override: tuple[int, int, int] | None = None,
-) -> None:
-    pygame.draw.rect(surf, _CARD_FACE, rect, border_radius=_CORNER)
-
-    # Border priority: selected > winning > led > trump > hover > default
-    if selected:
-        bdr, bdr_w = _CYAN, 3
-    elif is_winning:
-        bdr, bdr_w = _EMERALD, 3
-    elif is_led:
-        bdr, bdr_w = _GOLD, 2
-    elif is_trump(card, trump):
-        bdr, bdr_w = _GOLD, 2
-    elif hover and legal:
-        bdr, bdr_w = (160, 160, 180), 2
-    else:
-        bdr, bdr_w = (140, 140, 155), 1
-
-    if border_override:
-        bdr = border_override
-
-    pygame.draw.rect(surf, bdr, rect, bdr_w, border_radius=_CORNER)
-
-    col = _SUIT_COLOUR[card.suit]
-
-    # Top-left rank + suit
-    r_surf = font_rank.render(card.rank.display, True, col)
-    surf.blit(r_surf, (rect.x + 4, rect.y + 3))
-    s_surf = font_rank.render(card.suit.symbol, True, col)
-    surf.blit(s_surf, (rect.x + 4, rect.y + 3 + r_surf.get_height()))
-
-    # Centre suit symbol (large)
-    big = font_sym.render(card.suit.symbol, True, col)
-    surf.blit(big, big.get_rect(center=rect.center))
-
-    # Bottom-right rank (inverted)
-    r2 = font_rank.render(card.rank.display, True, col)
-    surf.blit(r2, (rect.right - r2.get_width() - 4, rect.bottom - r2.get_height() - 3))
-
-    # Dim illegal
-    if not legal:
-        dim = pygame.Surface(rect.size, pygame.SRCALPHA)
-        dim.fill((0, 0, 0, 140))
-        surf.blit(dim, rect.topleft)
-
-
-def _draw_card_back(surf: pygame.Surface, rect: pygame.Rect) -> None:
-    pygame.draw.rect(surf, _CARD_BACK, rect, border_radius=_CORNER)
-    inner = rect.inflate(-8, -8)
-    pygame.draw.rect(surf, (50, 70, 160), inner, border_radius=max(0, _CORNER - 4))
-    # Simple cross-hatch suggestion
-    pygame.draw.rect(surf, (35, 50, 130), inner, 1, border_radius=max(0, _CORNER - 4))
-
-
-def _draw_rank_badge(
-    surf: pygame.Surface,
-    rect: pygame.Rect,
-    card: Card,
-    trump: Suit,
-    font: pygame.font.Font,
-) -> None:
-    """Draw #N rank badge in the top-RIGHT corner so it doesn't cover rank/suit."""
-    rank = card_global_rank(card, trump)
-    label = f"#{rank}"
-    txt = font.render(label, True, (20, 20, 30))
-    badge_w = txt.get_width() + 6
-    badge_h = txt.get_height() + 2
-    badge_rect = pygame.Rect(rect.right - badge_w - 2, rect.y + 2, badge_w, badge_h)
-    badge_surf = pygame.Surface((badge_w, badge_h), pygame.SRCALPHA)
-    badge_surf.fill((220, 220, 210, 210))
-    surf.blit(badge_surf, badge_rect.topleft)
-    surf.blit(txt, (badge_rect.x + 3, badge_rect.y + 1))
-
-
-# Tag display order and colours.
-_INDICATOR_SLOTS: list[tuple[str, tuple[int, int, int], tuple[int, int, int]]] = [
-    ("WORST", _DANGER, (240, 220, 220)),
-    ("CAN WIN", _EMERALD, (220, 240, 225)),
-    ("BEST", _EMERALD, (220, 240, 225)),
-    ("RENEGE", _GOLD, (240, 235, 200)),
-]
-_TAG_H = 13  # chip height
-_TAG_PAD = 3  # horizontal padding inside each chip
-_TAG_GAP = 2  # gap between chips
-
-
-def _draw_card_indicators(
-    surf: pygame.Surface,
-    rect: pygame.Rect,
-    tags: set[str],
-    font: pygame.font.Font,
-) -> None:
-    """
-    Render active tag labels as chips stacked bottom-to-top on the left of the card.
-    """
-    x = rect.x + 3
-    y = rect.bottom - _TAG_H - 3
-    for tag, bg, fg in _INDICATOR_SLOTS:
-        if tag not in tags:
-            continue
-        txt = font.render(tag, True, fg)
-        chip_w = txt.get_width() + _TAG_PAD * 2
-        chip = pygame.Rect(x, y, chip_w, _TAG_H)
-        chip_surf = pygame.Surface(chip.size, pygame.SRCALPHA)
-        r, g, b = bg
-        chip_surf.fill((r, g, b, 210))
-        surf.blit(chip_surf, chip.topleft)
-        surf.blit(txt, txt.get_rect(center=chip.center))
-        y -= _TAG_H + _TAG_GAP
-
-
-# ---------------------------------------------------------------------------
-# Corner-bracket border helper
-# ---------------------------------------------------------------------------
-
-_BRACKET_LEN = 14  # length of each corner arm (px)
-_BRACKET_T = 1  # line thickness
-
-
-def _draw_corner_border(
-    surf: pygame.Surface,
-    rect: pygame.Rect,
-    colour: tuple[int, int, int],
-) -> None:
-    """Draw bracket-style corner marks around *rect* — no full perimeter line."""
-    x, y = rect.x, rect.y
-    r, b = rect.right, rect.bottom
-    cl = _BRACKET_LEN
-    t = _BRACKET_T
-    for ox, oy, sx, sy in [
-        (x, y, 1, 1),  # top-left
-        (r, y, -1, 1),  # top-right
-        (x, b, 1, -1),  # bottom-left
-        (r, b, -1, -1),  # bottom-right
-    ]:
-        pygame.draw.line(surf, colour, (ox, oy), (ox + sx * cl, oy), t)
-        pygame.draw.line(surf, colour, (ox, oy), (ox, oy + sy * cl), t)
 
 
 # ---------------------------------------------------------------------------
@@ -1703,8 +1171,6 @@ class TacticalUI:
                 shown_cards: set[Card] = set()
                 if state.rob_this_round and state.rob_this_round[0] == opp.name:
                     _, card_taken = state.rob_this_round
-                    from twentyfive.cards.card import Rank
-
                     ace_of_trump = Card(Rank.ACE, trump)
                     if card_taken in opp.hand:
                         shown_cards.add(card_taken)
@@ -1950,226 +1416,6 @@ class TacticalUI:
                 trump=state.trump_suit,
             )
         )
-
-
-# ---------------------------------------------------------------------------
-# Setup lobby — called by __main__.py before the game engine is created
-# ---------------------------------------------------------------------------
-
-
-def setup_game() -> tuple[list[str], dict[str, str]] | None:
-    """
-    Show a pygame setup lobby.
-
-    Returns ``(player_names, {name: type_string})`` where *type_string* is one
-    of "Human", "Random", "Heuristic", "Enhanced", "ISMCTS".
-    Returns ``None`` if the user closes the window without starting.
-    """
-    pygame.init()
-    screen = pygame.display.set_mode((_W, _H))
-    pygame.display.set_caption("Twenty-Five — Setup")
-    clock = pygame.time.Clock()
-
-    font_title = pygame.font.SysFont("monospace", 40, bold=True)
-    font_hdr = pygame.font.SysFont("monospace", 22, bold=True)
-    font_md = pygame.font.SysFont("monospace", 20)
-    font_sm = pygame.font.SysFont("monospace", 16)
-
-    # --- State ---
-    n = 4
-    names: list[str] = list(_SETUP_NAMES[:6])  # always keep 6 slots; use names[:n]
-    ai_types: list[str] = ["Enhanced"] * 6
-    focused = -1  # index of name field being edited, or -1
-
-    # --- Layout ---
-    TBL_X = 180
-    NUM_COL_W = 50
-    NAME_COL_X = TBL_X + NUM_COL_W
-    NAME_COL_W = 360
-    TYPE_COL_X = NAME_COL_X + NAME_COL_W + 20
-    TYPE_COL_W = 300
-    ROW_H = 52
-    ROWS_Y = 285
-    HDR_Y = ROWS_Y - 34
-    COUNT_Y = 158
-    COUNT_X0 = _W // 2 - (5 * 70) // 2
-
-    BTN_Y = ROWS_Y + 6 * ROW_H + 24
-    start_rect = pygame.Rect(_W // 2 - 130, BTN_Y, 230, 46)
-    quit_rect = pygame.Rect(_W // 2 + 115, BTN_Y, 110, 46)
-
-    def _count_rect(n_val: int) -> pygame.Rect:
-        return pygame.Rect(COUNT_X0 + (n_val - 2) * 70, COUNT_Y, 60, 36)
-
-    def _name_rect(i: int) -> pygame.Rect:
-        return pygame.Rect(NAME_COL_X, ROWS_Y + i * ROW_H + 10, NAME_COL_W, 32)
-
-    def _type_prev_rect(i: int) -> pygame.Rect:
-        return pygame.Rect(TYPE_COL_X, ROWS_Y + i * ROW_H + 10, 30, 32)
-
-    def _type_next_rect(i: int) -> pygame.Rect:
-        return pygame.Rect(TYPE_COL_X + TYPE_COL_W - 30, ROWS_Y + i * ROW_H + 10, 30, 32)
-
-    t_start = pygame.time.get_ticks() / 1000.0
-    running = True
-    result: tuple[list[str], dict[str, str]] | None = None
-
-    while running:
-        t = pygame.time.get_ticks() / 1000.0 - t_start
-        mouse = pygame.mouse.get_pos()
-        screen.fill(_BG_DARK)
-
-        # Title
-        title_s = font_title.render("TWENTY-FIVE", True, _GOLD)
-        screen.blit(title_s, title_s.get_rect(centerx=_W // 2, y=38))
-        sub_s = font_hdr.render("Player Setup", True, _TEXT_MUT)
-        screen.blit(sub_s, sub_s.get_rect(centerx=_W // 2, y=86))
-        pygame.draw.line(screen, _DIVIDER, (80, 120), (_W - 80, 120), 1)
-
-        # Player count selector
-        lbl_s = font_md.render("Number of Players:", True, _TEXT_PRI)
-        screen.blit(lbl_s, lbl_s.get_rect(centerx=_W // 2, y=130))
-        for n_val in range(2, 7):
-            r = _count_rect(n_val)
-            sel = n_val == n
-            pygame.draw.rect(screen, _EMERALD_D if sel else _BG_PANEL, r, border_radius=6)
-            pygame.draw.rect(screen, _EMERALD if sel else _PANEL_BDR, r, 1, border_radius=6)
-            cs = font_hdr.render(str(n_val), True, _EMERALD if sel else _TEXT_PRI)
-            screen.blit(cs, cs.get_rect(center=r.center))
-
-        # Column headers
-        pygame.draw.line(
-            screen, _DIVIDER, (TBL_X, HDR_Y + 26), (TYPE_COL_X + TYPE_COL_W, HDR_Y + 26), 1
-        )
-        screen.blit(font_hdr.render("#", True, _TEXT_MUT), (TBL_X + 12, HDR_Y))
-        screen.blit(font_hdr.render("Name", True, _TEXT_MUT), (NAME_COL_X + 4, HDR_Y))
-        screen.blit(font_hdr.render("Type", True, _TEXT_MUT), (TYPE_COL_X + 4, HDR_Y))
-
-        # Player rows
-        for i in range(6):
-            active_row = i < n
-            row_y = ROWS_Y + i * ROW_H
-
-            if not active_row:
-                dim = font_sm.render(f"— slot {i + 1} inactive —", True, _DIVIDER)
-                screen.blit(dim, dim.get_rect(x=NAME_COL_X, y=row_y + 16))
-                continue
-
-            # Row number
-            num_s = font_md.render(str(i + 1), True, _GOLD if i == 0 else _TEXT_MUT)
-            screen.blit(num_s, num_s.get_rect(centerx=TBL_X + NUM_COL_W // 2, y=row_y + 18))
-
-            # Name input field
-            nr = _name_rect(i)
-            is_focused = i == focused
-            pygame.draw.rect(screen, _BG_CARD if is_focused else _BG_PANEL, nr, border_radius=4)
-            pygame.draw.rect(screen, _CYAN if is_focused else _PANEL_BDR, nr, 1, border_radius=4)
-            cursor = "|" if is_focused and int(t * 2) % 2 == 0 else ""
-            nm_s = font_md.render(names[i] + cursor, True, _TEXT_PRI)
-            screen.blit(nm_s, (nr.x + 6, nr.y + 6))
-
-            # Type selector: [<]  TypeLabel  [>]
-            pv = _type_prev_rect(i)
-            nx = _type_next_rect(i)
-            type_label_x = pv.right + 4
-            type_label_w = nx.left - pv.right - 8
-
-            for btn_r, lbl in [(pv, "<"), (nx, ">")]:
-                hov = btn_r.collidepoint(mouse)
-                pygame.draw.rect(
-                    screen,
-                    _blend(_BG_PANEL, _TEXT_PRI, 0.15) if hov else _BG_PANEL,
-                    btn_r,
-                    border_radius=4,
-                )
-                pygame.draw.rect(screen, _PANEL_BDR, btn_r, 1, border_radius=4)
-                ls = font_md.render(lbl, True, _TEXT_PRI)
-                screen.blit(ls, ls.get_rect(center=btn_r.center))
-
-            type_str = ai_types[i]
-            type_col = _EMERALD if type_str == "Human" else _GOLD
-            ts = font_md.render(type_str, True, type_col)
-            screen.blit(ts, ts.get_rect(center=(type_label_x + type_label_w // 2, pv.centery)))
-
-        # Divider before buttons
-        div_y = ROWS_Y + 6 * ROW_H + 10
-        pygame.draw.line(screen, _DIVIDER, (80, div_y), (_W - 80, div_y), 1)
-
-        # Start / Quit buttons
-        for r, lbl, col, bdr_col in [
-            (start_rect, "START GAME", _EMERALD_D, _EMERALD),
-            (quit_rect, "QUIT", _BG_PANEL, _DANGER),
-        ]:
-            hov = r.collidepoint(mouse)
-            pygame.draw.rect(
-                screen, _blend(col, _TEXT_PRI, 0.15) if hov else col, r, border_radius=8
-            )
-            pygame.draw.rect(screen, bdr_col, r, 1, border_radius=8)
-            ls = font_hdr.render(lbl, True, _TEXT_PRI)
-            screen.blit(ls, ls.get_rect(center=r.center))
-
-        # Hint
-        hint = font_sm.render(
-            "Click a name to edit  ·  < > to change type  ·  ESC to quit", True, _TEXT_MUT
-        )
-        screen.blit(hint, hint.get_rect(centerx=_W // 2, y=BTN_Y + 56))
-
-        # --- Events ---
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    running = False
-                elif focused >= 0:
-                    if event.key == pygame.K_BACKSPACE:
-                        names[focused] = names[focused][:-1]
-                    elif event.key in (pygame.K_RETURN, pygame.K_TAB):
-                        focused = (focused + 1) % n
-                    elif event.unicode.isprintable() and len(names[focused]) < 18:
-                        names[focused] += event.unicode
-
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                pos = event.pos
-
-                # Player count buttons
-                for n_val in range(2, 7):
-                    if _count_rect(n_val).collidepoint(pos):
-                        n = n_val
-                        focused = -1
-                        break
-
-                # Name fields — clicking sets focus; clicking elsewhere clears it
-                new_focus = -1
-                for i in range(n):
-                    if _name_rect(i).collidepoint(pos):
-                        new_focus = i
-                        break
-                focused = new_focus
-
-                # Type < / > buttons
-                for i in range(n):
-                    if _type_prev_rect(i).collidepoint(pos):
-                        idx = _SETUP_AI_TYPES.index(ai_types[i])
-                        ai_types[i] = _SETUP_AI_TYPES[(idx - 1) % len(_SETUP_AI_TYPES)]
-                    elif _type_next_rect(i).collidepoint(pos):
-                        idx = _SETUP_AI_TYPES.index(ai_types[i])
-                        ai_types[i] = _SETUP_AI_TYPES[(idx + 1) % len(_SETUP_AI_TYPES)]
-
-                # Start / Quit
-                if start_rect.collidepoint(pos):
-                    final_names = [nm.strip() or _SETUP_NAMES[i] for i, nm in enumerate(names[:n])]
-                    type_map = {final_names[i]: ai_types[i] for i in range(n)}
-                    result = (final_names, type_map)
-                    running = False
-                elif quit_rect.collidepoint(pos):
-                    running = False
-
-        pygame.display.flip()
-        clock.tick(60)
-
-    return result
 
 
 # ---------------------------------------------------------------------------
