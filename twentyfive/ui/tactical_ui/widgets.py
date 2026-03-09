@@ -33,6 +33,7 @@ from .constants import (
     _EMERALD,
     _EMERALD_D,
     _GOLD,
+    _GOLD_D,
     _INDICATOR_SLOTS,
     _SUIT_COLOUR,
     _TAG_GAP,
@@ -179,11 +180,43 @@ def _draw_card_face(
 
 
 def _draw_card_back(surf: pygame.Surface, rect: pygame.Rect) -> None:
+    """Draw a card back with a classic diamond cross-hatch pattern and double border."""
+    # Base fill
     pygame.draw.rect(surf, _CARD_BACK, rect, border_radius=_CORNER)
-    inner = rect.inflate(-8, -8)
-    pygame.draw.rect(surf, (50, 70, 160), inner, border_radius=max(0, _CORNER - 4))
-    # Simple cross-hatch suggestion
-    pygame.draw.rect(surf, (35, 50, 130), inner, 1, border_radius=max(0, _CORNER - 4))
+    # Outer border (thin gold — matches trump card highlight colour)
+    pygame.draw.rect(surf, _GOLD_D, rect, 1, border_radius=_CORNER)
+
+    # Inner frame (inset 4 px)
+    frame = rect.inflate(-8, -8)
+    frame_col = (40, 58, 145)
+    pygame.draw.rect(surf, frame_col, frame, border_radius=max(0, _CORNER - 4))
+    pygame.draw.rect(surf, (70, 95, 190), frame, 1, border_radius=max(0, _CORNER - 4))
+
+    # Diamond cross-hatch within the frame (clipped so lines don't bleed outside)
+    pattern = frame.inflate(-4, -4)
+    step = max(5, min(9, pattern.width // 5))  # scale to card size
+    line_col = (55, 78, 175)
+    old_clip = surf.get_clip()
+    surf.set_clip(pattern)
+    h = pattern.height
+    for off in range(-h, pattern.width + h, step):
+        # NW→SE diagonal
+        pygame.draw.line(
+            surf,
+            line_col,
+            (pattern.left + off, pattern.top),
+            (pattern.left + off + h, pattern.bottom),
+            1,
+        )
+        # NE→SW diagonal
+        pygame.draw.line(
+            surf,
+            line_col,
+            (pattern.right - off, pattern.top),
+            (pattern.right - off - h, pattern.bottom),
+            1,
+        )
+    surf.set_clip(old_clip)
 
 
 def _draw_rank_badge(
