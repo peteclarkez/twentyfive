@@ -16,6 +16,7 @@ Requires pygame-ce:  pip install -e ".[gui]"
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import threading
 from typing import TYPE_CHECKING
@@ -69,6 +70,7 @@ _TRICK_CW, _TRICK_CH = 44, 62  # trick-zone history cards
 _HDR_CARD_W, _HDR_CARD_H = 32, 45  # tiny face-up card in header
 _CARD_GAP = 14
 _CORNER = 8
+_GAP = 4  # transparent gap between layout sections (lets background show through)
 
 # ---------------------------------------------------------------------------
 # Colour palette
@@ -144,6 +146,180 @@ _SETUP_AI_TYPES = ["Human", "Random", "Heuristic", "Enhanced", "ISMCTS"]
 def _pulse(t: float, speed: float = 2.5) -> float:
     """Return a value in [0.0, 1.0] that oscillates with the given speed (Hz)."""
     return (math.sin(t * speed * math.pi * 2) + 1) / 2
+
+
+# ---------------------------------------------------------------------------
+# Procedural background — value-noise lava-lamp
+# ---------------------------------------------------------------------------
+
+_BG_NOISE_PALETTE: list[tuple[int, int, int]] = [
+    (10, 26, 18),  # 0.0 — Slate
+    (19, 58, 42),  # 0.5 — Deep Teal
+    (80, 200, 120),  # 1.0 — Emerald Green
+]
+
+
+def _noise_colour(v: float) -> tuple[int, int, int]:
+    """Map noise value v ∈ [0,1] to an RGB colour via a two-segment gradient."""
+    if v <= 0.5:
+        t = v * 2.0
+        a, b = _BG_NOISE_PALETTE[0], _BG_NOISE_PALETTE[1]
+    else:
+        t = (v - 0.5) * 2.0
+        a, b = _BG_NOISE_PALETTE[1], _BG_NOISE_PALETTE[2]
+    return (
+        int(a[0] + (b[0] - a[0]) * t),
+        int(a[1] + (b[1] - a[1]) * t),
+        int(a[2] + (b[2] - a[2]) * t),
+    )
+
+
+class ProceduralBackground:
+    """
+    Low-resolution value-noise background with an animated lava-lamp flow.
+
+    A 128×128 tile is baked once at startup using an 8×8 control grid and
+    bilinear + smoothstep interpolation.  Each frame a 64×64 window is sampled
+    from that tile at an offset driven by math.sin / math.cos, then upscaled
+    to fill the window.
+    """
+
+    _GRID = 8  # coarse control-grid resolution
+    _TILE = 128  # baked tile size (must be ≥ 2 × SIZE)
+    _SIZE = 64  # displayed sample window size
+
+    def __init__(self, w: int, h: int, seed: int = 42) -> None:
+        self._w, self._h = w, h
+        self._tile = self._bake_tile(seed)
+
+    def _bake_tile(self, seed: int) -> pygame.Surface:
+        import random
+
+        rng = random.Random(seed)
+        G = self._GRID
+        N = self._TILE
+        # Control grid: (G+1)×(G+1) so tiling wraps cleanly
+        grid = [[rng.random() for _ in range(G + 1)] for _ in range(G + 1)]
+        surf = pygame.Surface((N, N))
+        pa = pygame.PixelArray(surf)
+        for py in range(N):
+            for px in range(N):
+                gx = (px / N) * G
+                gy = (py / N) * G
+                ix, iy = int(gx), int(gy)
+                fx, fy = gx - ix, gy - iy
+                # Smoothstep for smoother blobs
+                sx = fx * fx * (3 - 2 * fx)
+                sy = fy * fy * (3 - 2 * fy)
+                v = (
+                    grid[iy][ix] * (1 - sx) * (1 - sy)
+                    + grid[iy][ix + 1] * sx * (1 - sy)
+                    + grid[iy + 1][ix] * (1 - sx) * sy
+                    + grid[iy + 1][ix + 1] * sx * sy
+                )
+                r, g, b = _noise_colour(v)
+                pa[px][py] = surf.map_rgb(r, g, b)
+        del pa
+        return surf
+
+    def draw(self, screen: pygame.Surface, t: float) -> None:
+        amplitude = 28.0
+        ox_f = (math.sin(t * 0.12) * amplitude) % self._SIZE
+        oy_f = (math.cos(t * 0.08) * amplitude) % self._SIZE
+        ox_i = int(ox_f)
+        oy_i = int(oy_f)
+        frac_x = ox_f - ox_i  # fractional tile-pixel remainder [0, 1)
+        frac_y = oy_f - oy_i
+
+        # Sample one extra pixel each way so the fractional shift has data to blend into.
+        # ox_i max = SIZE-1, so ox_i + SIZE + 1 <= TILE is always safe.
+        sample = self._tile.subsurface(pygame.Rect(ox_i, oy_i, self._SIZE + 1, self._SIZE + 1))
+
+        # Upscale with one tile-pixel of headroom to absorb the fractional offset.
+        px_w = self._w / self._SIZE  # screen pixels per tile pixel (≈18.75)
+        px_h = self._h / self._SIZE  # screen pixels per tile pixel (≈12.5)
+        bg = pygame.transform.smoothscale(
+            sample, (int(self._w + px_w + 1), int(self._h + px_h + 1))
+        )
+
+        # Shift by the sub-pixel fraction: moves 1 screen-px at a time instead of 19.
+        screen.blit(bg, (-int(frac_x * px_w), -int(frac_y * px_h)))
+
+
+# ---------------------------------------------------------------------------
+# Floating card physics — per-slot bob + mouse-reactive tilt
+# ---------------------------------------------------------------------------
+
+
+class FloatingCard:
+    """Per-card animated display state: sine-wave bobbing + mouse-reactive tilt with lerp."""
+
+    BOB_SPEED = 0.003  # radians per millisecond
+    LERP = 0.12  # smoothing factor per frame
+
+    def __init__(self, slot_idx: int) -> None:
+        self._phase = slot_idx * 0.8  # stagger so cards don't sync
+        self._bob_y: float = 0.0
+        self.scale: float = 1.0
+        self.rotation: float = 0.0
+        self._target_scale: float = 1.0
+        self._target_rot: float = 0.0
+
+    def update(
+        self,
+        ticks_ms: int,
+        mouse: tuple[int, int],
+        rect: pygame.Rect,
+        hovering: bool,
+    ) -> None:
+        t = ticks_ms * self.BOB_SPEED
+        self._bob_y = math.sin(t + self._phase) * 5.0
+        if hovering:
+            self._target_scale = 1.10
+            dx = mouse[0] - rect.centerx
+            self._target_rot = max(-15.0, min(15.0, dx * 0.05))
+        else:
+            self._target_scale = 1.0
+            self._target_rot = 0.0
+        self.scale += (self._target_scale - self.scale) * self.LERP
+        self.rotation += (self._target_rot - self.rotation) * self.LERP
+
+    @property
+    def bob_y(self) -> float:
+        return self._bob_y
+
+
+# ---------------------------------------------------------------------------
+# Bezier card-flight animation
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass
+class _CardAnim:
+    card: Card
+    p0: tuple[float, float]  # start centre
+    p1: tuple[float, float]  # control point (arcs above mid)
+    p2: tuple[float, float]  # end centre (arena slot)
+    start_ms: int
+    duration_ms: int = 500
+    trump: "Suit | None" = None
+
+
+def _bezier(
+    p0: tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
+    t: float,
+) -> tuple[float, float]:
+    u = 1.0 - t
+    return (
+        u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+        u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1],
+    )
+
+
+def _ease_out(t: float) -> float:
+    return 1.0 - (1.0 - t) ** 2
 
 
 # ---------------------------------------------------------------------------
@@ -470,8 +646,12 @@ class TacticalUI:
         self._buttons: list[_Button] = []
         self._t: float = 0.0  # elapsed seconds for animations
         self._last_trick_count: int = 0  # detect trick completions
-        self._trick_pause_until: float = 0.0  # time when trick pause expires
-        self._round_pause_until: float = 0.0  # time when round-end pause expires
+        self._trick_pause_until: float = 0.0  # time when trick pause expires (cards clear)
+        self._trick_overlay_from: float = 0.0  # time when trick result overlay appears
+        self._trick_pause_pending: bool = False  # defer until anims land
+        self._frozen_trick: "tuple[TrickPlay, ...] | None" = None  # displayed during anim + pause
+        self._round_pause_until: float = 0.0  # time when round-end overlay expires
+        self._round_pause_pending: bool = False  # defer round overlay until anims land
         self._last_phase: Phase | None = None  # for phase-transition detection
         # Fixed hand slots — cards keep their initial position throughout the round.
         # _my_name is the human player; None = all-AI spectating (follow current player).
@@ -482,8 +662,13 @@ class TacticalUI:
         self._last_round: int = -1
         # Delay before the next AI move fires (seconds) — gives 1 s between plays.
         self._ai_move_after: float = 0.0
-        # Time when the game-over screen is shown; set when game ends so we show
-        # the final round summary first.
+        # Floating card physics (one per hand slot)
+        self._floating: list[FloatingCard] = [FloatingCard(i) for i in range(5)]
+        # In-flight card animations (bezier arcs from hand to arena)
+        self._anims: list[_CardAnim] = []
+        # Procedural background (initialised in run() after pygame.init())
+        self._bg: ProceduralBackground | None = None
+        # Time when the game-over board-summary starts (-1 = not yet; -2 = waiting for anims).
         self._game_over_show_after: float = -1.0
 
     # ------------------------------------------------------------------
@@ -505,6 +690,15 @@ class TacticalUI:
         self._font_sym_lg = pygame.font.SysFont("Arial", 36, bold=True)
         self._font_sym_xl = pygame.font.SysFont("Arial", 56, bold=True)
         self._font_sym_hand = pygame.font.SysFont("Arial", 56, bold=True)  # hand card centre
+
+        # Procedural background — baked after pygame.init()
+        self._bg = ProceduralBackground(_W, _H)
+
+        # Build scanline overlay once (1px black lines every 3px, alpha=20)
+        self._scanlines = pygame.Surface((_W, _H), pygame.SRCALPHA)
+        self._scanlines.fill((0, 0, 0, 0))
+        for _sl_y in range(0, _H, 3):
+            pygame.draw.line(self._scanlines, (0, 0, 0, 20), (0, _sl_y), (_W, _sl_y))
 
         clock = pygame.time.Clock()
         running = True
@@ -528,7 +722,11 @@ class TacticalUI:
                     elif key == pygame.K_SPACE:
                         # Space skips any active pause (including game-over pre-screen)
                         self._trick_pause_until = 0.0
+                        self._trick_overlay_from = 0.0
+                        self._trick_pause_pending = False
+                        self._frozen_trick = None
                         self._round_pause_until = 0.0
+                        self._round_pause_pending = False
                         self._game_over_show_after = 0.0
                     elif not pausing and not self._ai_thinking and not self._ctrl.is_game_over:
                         state = self._ctrl.state
@@ -554,19 +752,40 @@ class TacticalUI:
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if trick_pausing:
                         self._trick_pause_until = 0.0
+                        self._trick_overlay_from = 0.0
+                        self._trick_pause_pending = False
+                        self._frozen_trick = None
                     elif round_pausing:
                         self._round_pause_until = 0.0
+                        self._round_pause_pending = False
                     else:
                         self._handle_click(event.pos)
 
-            if self._ctrl.is_game_over:
-                # First time we detect game over: show the final round summary for 5 s.
-                if self._game_over_show_after < 0:
+            if self._ctrl.is_game_over and not self._ai_thinking:
+                # First detection: ensure the last trick is frozen for the summary board,
+                # then defer the timer until any flying card has landed (-2 = pending).
+                # Guard on not self._ai_thinking: the worker thread sets is_game_over before
+                # posting _AI_DONE, so without this guard we'd detect game-over before the
+                # animation is launched (self._anims still empty) and skip the -2 sentinel.
+                if self._game_over_show_after == -1.0:
+                    go_state = self._ctrl.state
+                    if self._frozen_trick is None and go_state.completed_tricks:
+                        self._frozen_trick = go_state.completed_tricks[-1]
+                    self._game_over_show_after = -2.0 if self._anims else self._t + 5.0
+                    if self._game_over_show_after > 0:
+                        self._round_pause_until = self._game_over_show_after
+                # Pending: animations just cleared — start the 5 s board summary now.
+                if self._game_over_show_after == -2.0 and not self._anims:
                     self._game_over_show_after = self._t + 5.0
                     self._round_pause_until = self._game_over_show_after
 
-                if self._t < self._game_over_show_after:
-                    # Still in the final-round summary pause — draw the regular board.
+                if self._game_over_show_after < 0:
+                    # Still animating — draw the board normally (card in flight).
+                    state = self._ctrl.state
+                    self._buttons = self._build_buttons(state)
+                    self._draw(state, mouse, round_pausing=False)
+                elif self._t < self._game_over_show_after:
+                    # Final-round summary pause — draw the board with round-end overlay.
                     state = self._ctrl.state
                     round_pausing = True
                     self._buttons = self._build_buttons(state)
@@ -576,27 +795,75 @@ class TacticalUI:
             else:
                 state = self._ctrl.state
 
-                # Detect trick completion (triggers pause for tricks 1–4)
+                # Detect trick completion (any trick, any phase)
                 curr_count = len(state.completed_tricks)
                 if curr_count < self._last_trick_count:
                     self._last_trick_count = 0  # new round reset
-                elif curr_count > self._last_trick_count and state.phase == Phase.TRICK:
-                    self._trick_pause_until = self._t + 2.5
+                    self._frozen_trick = None
+                elif curr_count > self._last_trick_count:
                     self._last_trick_count = curr_count
+                    # Always freeze the completed trick so the arena stays populated
+                    self._frozen_trick = (
+                        state.completed_tricks[-1] if state.completed_tricks else None
+                    )
+                    # Show trick-complete overlay for every trick (including the last)
+                    if self._anims:
+                        self._trick_pause_pending = True  # defer until flight lands
+                    else:
+                        self._trick_overlay_from = self._t + 0.4
+                        self._trick_pause_until = self._trick_overlay_from + 2.5
                 else:
                     self._last_trick_count = curr_count
 
-                # Detect ROUND_END entry — show round summary pause
+                # Fire deferred trick pause once all animations have landed
+                if self._trick_pause_pending and not self._anims:
+                    self._trick_pause_pending = False
+                    self._trick_overlay_from = self._t + 0.4
+                    self._trick_pause_until = self._trick_overlay_from + 2.5
+
+                # Detect ROUND_END entry — mark round pause as pending
                 if state.phase == Phase.ROUND_END and self._last_phase != Phase.ROUND_END:
+                    self._round_pause_pending = True
+                # Fire deferred round pause once animations AND trick overlay are both done
+                if (
+                    self._round_pause_pending
+                    and not self._anims
+                    and self._t >= self._trick_pause_until
+                ):
+                    self._round_pause_pending = False
                     self._round_pause_until = self._t + 4.0
                 self._last_phase = state.phase
 
                 trick_pausing = self._t < self._trick_pause_until
                 round_pausing = self._t < self._round_pause_until
                 pausing = trick_pausing or round_pausing
+                # Auto-advance past ROUND_END once the overlay is dismissed or expires.
+                # Must happen BEFORE the frozen-trick clear so we know if game ended.
+                if (
+                    not round_pausing
+                    and not self._round_pause_pending
+                    and not self._anims
+                    and state.phase == Phase.ROUND_END
+                    and not self._ctrl.is_game_over
+                ):
+                    try:
+                        self._ctrl.apply_move(ConfirmRoundEnd())
+                        self._ai_move_after = self._t + 0.5
+                    except ValueError:
+                        pass
+                # Clear frozen trick once all overlays and animations are done.
+                # Keep it if the game just ended — the 5s summary board needs it.
+                if (
+                    not trick_pausing
+                    and not round_pausing
+                    and not self._anims
+                    and not self._ctrl.is_game_over
+                ):
+                    self._frozen_trick = None
                 if (
                     not pausing
                     and not self._ai_thinking
+                    and not self._anims
                     and self._ctrl.is_ai_turn()
                     and self._t >= self._ai_move_after
                 ):
@@ -627,6 +894,11 @@ class TacticalUI:
         state = self._ctrl.state
         if isinstance(move, PlayCard):
             self._status = f"{actor} played {move.card}"
+            # Launch a bezier animation: card drops in from above the arena slot
+            player_idx = next((i for i, p in enumerate(state.players) if p.name == actor), 0)
+            target = self._arena_slot_centre(player_idx, len(state.players))
+            start = (target[0], float(-_HAND_CH))
+            self._launch_anim(move.card, player_idx, start, state)
         elif isinstance(move, Rob):
             taken = state.rob_this_round[1] if state.rob_this_round else "a card"
             self._status = f"{actor} robs — takes {taken}"
@@ -665,19 +937,37 @@ class TacticalUI:
             case "play":
                 if self._selected is not None:
                     try:
-                        self._ctrl.apply_move(PlayCard(self._selected))
+                        card = self._selected
+                        start = self._hand_slot_centre(card)
+                        player_idx = next(
+                            i
+                            for i, p in enumerate(state.players)
+                            if p.name == state.current_player.name
+                        )
+                        self._ctrl.apply_move(PlayCard(card))
                         self._selected = None
                         self._status = ""
                         self._ai_move_after = self._t + 1.0
+                        if start is not None:
+                            self._launch_anim(card, player_idx, start, state)
                     except ValueError:
                         self._status = "Invalid move — try again"
             case "auto":
-                card = _auto_play_card(state)
-                if card is not None:
+                auto_card = _auto_play_card(state)
+                if auto_card is not None:
+                    card = auto_card
+                    start = self._hand_slot_centre(card)
+                    player_idx = next(
+                        i
+                        for i, p in enumerate(state.players)
+                        if p.name == state.current_player.name
+                    )
                     self._ctrl.apply_move(PlayCard(card))
                     self._selected = None
                     self._status = ""
                     self._ai_move_after = self._t + 1.0
+                    if start is not None:
+                        self._launch_anim(card, player_idx, start, state)
             case "rob":
                 self._rob_choosing = True
                 self._status = "Click a card in your hand to discard"
@@ -714,9 +1004,15 @@ class TacticalUI:
                 self._status = "That card is not legal to play"
                 return
             if self._selected == card:
+                start = self._hand_slot_centre(card)
+                player_idx = next(
+                    i for i, p in enumerate(state.players) if p.name == state.current_player.name
+                )
                 self._ctrl.apply_move(PlayCard(card))
                 self._selected = None
                 self._status = ""
+                if start is not None:
+                    self._launch_anim(card, player_idx, start, state)
             else:
                 self._selected = card
                 self._status = f"Selected {card} — click again or [PLAY] to confirm"
@@ -849,7 +1145,10 @@ class TacticalUI:
         self, state: GameState, mouse: tuple[int, int], *, round_pausing: bool = False
     ) -> None:
         assert state.trump_suit is not None
-        self._screen.fill(_BG_DARK)
+        if self._bg is not None:
+            self._bg.draw(self._screen, self._t)
+        else:
+            self._screen.fill(_BG_DARK)
         self._draw_header(state)
         self._draw_scorecard(state)
         self._draw_trick_zone(state)
@@ -859,18 +1158,26 @@ class TacticalUI:
         if not round_pausing:
             for btn in self._buttons:
                 btn.draw(self._screen, self._font_md, mouse, self._t)
-        if self._t < self._trick_pause_until:
+        if self._trick_overlay_from < self._t < self._trick_pause_until:
             self._draw_trick_pause(state)
         if round_pausing:
             self._draw_round_end_pause(state)
+        # Flying card animations (bezier arcs from hand to arena)
+        self._draw_anims(state)
+        # Post-processing: scanline overlay (retro-arcade texture)
+        self._screen.blit(self._scanlines, (0, 0))
 
     # ------------------------------------------------------------------
     # Header
     # ------------------------------------------------------------------
 
     def _draw_header(self, state: GameState) -> None:
-        pygame.draw.rect(self._screen, _BG_PANEL, (0, 0, _W, _HDR_H))
-        pygame.draw.line(self._screen, _PANEL_BDR, (0, _HDR_H - 1), (_W, _HDR_H - 1))
+        pygame.draw.rect(
+            self._screen,
+            _BG_PANEL,
+            (_GAP, _GAP, _W - 2 * _GAP, _HDR_H - _GAP),
+            border_radius=8,
+        )
 
         # Left: Game ID
         gid = self._font_mono.render(f"GAME ID: {state.game_id[:8]}", True, _TEXT_MUT)
@@ -932,12 +1239,12 @@ class TacticalUI:
     # ------------------------------------------------------------------
 
     def _draw_scorecard(self, state: GameState) -> None:
-        panel = pygame.Rect(0, _HDR_H, _SIDE_W, _H - _HDR_H)
-        pygame.draw.rect(self._screen, _BG_PANEL, panel)
-        pygame.draw.line(self._screen, _PANEL_BDR, (_SIDE_W - 1, _HDR_H), (_SIDE_W - 1, _H))
+        # Inset all edges by _GAP so background shows through on every side
+        panel = pygame.Rect(_GAP, _HDR_H + _GAP, _SIDE_W - 2 * _GAP, _H - _HDR_H - 2 * _GAP)
+        pygame.draw.rect(self._screen, _BG_PANEL, panel, border_radius=_CORNER)
 
         title = self._font_sm.render("SCORECARD", True, _TEXT_MUT)
-        self._screen.blit(title, (12, _HDR_H + 10))
+        self._screen.blit(title, (_GAP + 12, _HDR_H + 10))
 
         max_score = max(p.score for p in state.players) if state.players else 0
         n_players = len(state.players)
@@ -951,7 +1258,7 @@ class TacticalUI:
             is_dealer = i == state.dealer_index
             is_leader = max_score > 0 and player.score == max_score
 
-            row_rect = pygame.Rect(6, y, _SIDE_W - 12, row_h - 6)
+            row_rect = pygame.Rect(_GAP + 6, y, _SIDE_W - 2 * _GAP - 12, row_h - 6)
 
             # Active player: glowing emerald border
             if is_active and state.phase not in (Phase.ROUND_END, Phase.GAME_OVER):
@@ -965,7 +1272,7 @@ class TacticalUI:
 
             # Status dot
             dot_col = _EMERALD if is_active else _TEXT_MUT
-            pygame.draw.circle(self._screen, dot_col, (18, y + 14), 5)
+            pygame.draw.circle(self._screen, dot_col, (_GAP + 18, y + 14), 5)
 
             # Name + [D] dealer badge
             name_parts = [player.name]
@@ -973,7 +1280,7 @@ class TacticalUI:
                 name_parts.append("[D]")
             name_str = "  ".join(name_parts)
             name_surf = self._font_md.render(name_str, True, _EMERALD if is_active else _TEXT_PRI)
-            self._screen.blit(name_surf, (28, y + 6))
+            self._screen.blit(name_surf, (_GAP + 28, y + 6))
 
             # Post-rob card: tiny thumbnail to the right of the name on the same row.
             # Shown for the entire round once a rob is known — even after the card is played.
@@ -999,9 +1306,9 @@ class TacticalUI:
             score_str = f"{player.score} / 25"
             score_col = _GOLD if is_leader else _TEXT_MUT
             sc_surf = self._font_sm.render(score_str, True, score_col)
-            self._screen.blit(sc_surf, (28, y + 28))
+            self._screen.blit(sc_surf, (_GAP + 28, y + 28))
 
-            bar_rect = pygame.Rect(28, y + 44, _SIDE_W - 44, 7)
+            bar_rect = pygame.Rect(_GAP + 28, y + 44, _SIDE_W - _GAP - 44, 7)
             pygame.draw.rect(self._screen, _BG_DARK, bar_rect, border_radius=4)
             filled = int(bar_rect.width * min(player.score, 25) / 25)
             if filled > 0:
@@ -1014,7 +1321,7 @@ class TacticalUI:
                 )
 
             # Trick pips
-            pip_x = 28
+            pip_x = _GAP + 28
             pip_y = y + 58
             for _ in range(player.tricks_won_this_round):
                 pygame.draw.rect(
@@ -1023,7 +1330,7 @@ class TacticalUI:
                 pip_x += 16
             if player.tricks_won_this_round == 0:
                 nd = self._font_xs.render("no tricks", True, _TEXT_MUT)
-                self._screen.blit(nd, (28, pip_y))
+                self._screen.blit(nd, (_GAP + 28, pip_y))
 
             y += row_h
 
@@ -1035,9 +1342,11 @@ class TacticalUI:
         assert state.trump_suit is not None
         trump = state.trump_suit
 
-        panel = pygame.Rect(_W - _SIDE_W, _HDR_H, _SIDE_W, _H - _HDR_H)
-        pygame.draw.rect(self._screen, _BG_PANEL, panel)
-        pygame.draw.line(self._screen, _PANEL_BDR, (_W - _SIDE_W, _HDR_H), (_W - _SIDE_W, _H))
+        # Inset all edges by _GAP so background shows through on every side
+        panel = pygame.Rect(
+            _W - _SIDE_W + _GAP, _HDR_H + _GAP, _SIDE_W - 2 * _GAP, _H - _HDR_H - 2 * _GAP
+        )
+        pygame.draw.rect(self._screen, _BG_PANEL, panel, border_radius=_CORNER)
 
         title = self._font_sm.render("TRICK ZONE", True, _TEXT_MUT)
         self._screen.blit(title, (_W - _SIDE_W + 12, _HDR_H + 10))
@@ -1124,8 +1433,15 @@ class TacticalUI:
         assert state.trump_suit is not None
         trump = state.trump_suit
 
-        arena_rect = pygame.Rect(_CTR_X, _ARENA_Y, _CTR_W, _ARENA_H)
-        pygame.draw.rect(self._screen, _BG_DARK, arena_rect)
+        # Semi-transparent overlay inset by _GAP on all sides (background shows in the gaps)
+        arena_rect = pygame.Rect(
+            _CTR_X + _GAP, _ARENA_Y + _GAP, _CTR_W - 2 * _GAP, _ARENA_H - 2 * _GAP
+        )
+        _arena_overlay = pygame.Surface(arena_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            _arena_overlay, (10, 10, 20, 160), _arena_overlay.get_rect(), border_radius=_CORNER
+        )
+        self._screen.blit(_arena_overlay, arena_rect.topleft)
 
         title = self._font_sm.render("ARENA", True, _TEXT_MUT)
         self._screen.blit(title, (_CTR_X + 12, _ARENA_Y + 8))
@@ -1145,15 +1461,21 @@ class TacticalUI:
             for cp in slot_positions[:n]
         ]
 
-        # Build lookup: player_name → TrickPlay (from current trick)
-        played: dict[str, TrickPlay] = {tp.player_name: tp for tp in state.current_trick}
-        led_name = state.current_trick[0].player_name if state.current_trick else None
+        # Use frozen trick (last completed) while animating or paused; live trick otherwise
+        display_trick = (
+            self._frozen_trick if self._frozen_trick is not None else state.current_trick
+        )
+        played: dict[str, TrickPlay] = {tp.player_name: tp for tp in display_trick}
+        led_name = display_trick[0].player_name if display_trick else None
 
-        # Determine current winner
+        # Cards still in-flight — suppress from arena slot until the animation lands
+        animating_cards: set[Card] = {a.card for a in self._anims}
+
+        # Determine current winner from the displayed trick
         winner_name: str | None = None
-        if state.current_trick:
-            led_suit = state.current_trick[0].card.suit
-            w = trick_winner(list(state.current_trick), led_suit, trump)
+        if display_trick:
+            led_suit = display_trick[0].card.suit
+            w = trick_winner(list(display_trick), led_suit, trump)
             winner_name = w.player_name
 
         for idx in range(n):
@@ -1165,7 +1487,10 @@ class TacticalUI:
             is_led = tp is not None and player.name == led_name
             is_winning = tp is not None and player.name == winner_name
 
-            if tp:
+            # Suppress card while its bezier flight is still in progress
+            in_flight = tp is not None and tp.card in animating_cards
+
+            if tp and not in_flight:
                 _draw_card_face(
                     self._screen,
                     slot_rect,
@@ -1204,7 +1529,10 @@ class TacticalUI:
                 gap_w,
                 name_lbl.get_height(),
             )
-            pygame.draw.rect(self._screen, _BG_DARK, gap_rect)
+            # Semi-transparent gap behind the player-name label (lets background bleed through)
+            _gap_surf = pygame.Surface(gap_rect.size, pygame.SRCALPHA)
+            _gap_surf.fill((10, 10, 20, 160))
+            self._screen.blit(_gap_surf, gap_rect.topleft)
             self._screen.blit(name_lbl, name_lbl.get_rect(centerx=cx, centery=bracket_rect.bottom))
 
     # ------------------------------------------------------------------
@@ -1229,10 +1557,15 @@ class TacticalUI:
 
         is_my_turn = not self._ctrl.is_ai_turn() and my_player.name == state.current_player.name
 
-        # Panel background
-        hand_rect = pygame.Rect(_CTR_X, _HAND_Y, _CTR_W, _HAND_H)
-        pygame.draw.rect(self._screen, _BG_PANEL, hand_rect)
-        pygame.draw.line(self._screen, _PANEL_BDR, (_CTR_X, _HAND_Y), (_CTR_X + _CTR_W, _HAND_Y))
+        # Panel background — semi-transparent, inset by _GAP on all sides
+        hand_rect = pygame.Rect(
+            _CTR_X + _GAP, _HAND_Y + _GAP, _CTR_W - 2 * _GAP, _HAND_H - 2 * _GAP
+        )
+        _hand_overlay = pygame.Surface(hand_rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(
+            _hand_overlay, (30, 30, 48, 210), _hand_overlay.get_rect(), border_radius=_CORNER
+        )
+        self._screen.blit(_hand_overlay, hand_rect.topleft)
 
         # Title
         rob_choosing_mine = state.phase == Phase.ROB and self._rob_choosing and is_my_turn
@@ -1288,16 +1621,24 @@ class TacticalUI:
             is_selected = card == self._selected
             is_rob_target = rob_choosing_mine
 
-            # Hover lift animation
-            draw_rect = rect.copy()
-            if is_selected:
-                draw_rect.y -= 20
-            elif hover and (is_legal or is_rob_target):
-                draw_rect.y -= 10
+            # Update floating card physics
+            fc = self._floating[slot_idx]
+            fc.update(pygame.time.get_ticks(), mouse, rect, hover and (is_legal or is_rob_target))
 
+            # Bob offset applies only when it's the human's turn (replaces static hover lift)
+            if is_my_turn:
+                bob_offset = fc.bob_y
+                if is_selected:
+                    bob_offset -= 20
+            else:
+                bob_offset = 0.0
+
+            # Render card to a temp surface, then rotozoom for scale+rotation
+            tmp = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+            tmp_rect = tmp.get_rect()
             _draw_card_face(
-                self._screen,
-                draw_rect,
+                tmp,
+                tmp_rect,
                 card,
                 trump,
                 self._font_md,
@@ -1306,16 +1647,18 @@ class TacticalUI:
                 hover=hover,
                 legal=(is_legal or is_rob_target),
             )
-
-            # Rank badge
             if state.phase not in (Phase.ROUND_END,):
-                _draw_rank_badge(self._screen, draw_rect, card, trump, self._font_xs)
+                _draw_rank_badge(tmp, tmp_rect, card, trump, self._font_xs)
+
+            rotated = pygame.transform.rotozoom(tmp, fc.rotation, fc.scale)
+            draw_rect = rotated.get_rect(center=(rect.centerx, rect.centery + int(bob_offset)))
+            self._screen.blit(rotated, draw_rect)
 
             # Key-number hint below card
             lbl = self._font_xs.render(key_hint, True, _TEXT_MUT)
             self._screen.blit(lbl, lbl.get_rect(centerx=draw_rect.centerx, y=draw_rect.bottom + 4))
 
-            # Strategic indicators (bottom-left corner of card)
+            # Strategic indicators (bottom-left corner of card, on the screen surface)
             tags = _compute_tags(
                 card,
                 hand_cards,
@@ -1390,11 +1733,52 @@ class TacticalUI:
                     cx += opp_cw + card_gap
 
     # ------------------------------------------------------------------
+    # Card flight animations
+    # ------------------------------------------------------------------
+
+    def _draw_anims(self, state: GameState) -> None:
+        """Draw in-flight bezier card animations and prune completed ones."""
+        if not self._anims or state.trump_suit is None:
+            return
+        now = pygame.time.get_ticks()
+        still_flying: list[_CardAnim] = []
+        for anim in self._anims:
+            elapsed = now - anim.start_ms
+            raw_t = min(1.0, elapsed / anim.duration_ms)
+            t = _ease_out(raw_t)
+            cx, cy = _bezier(anim.p0, anim.p1, anim.p2, t)
+            trump = anim.trump if anim.trump is not None else state.trump_suit
+            # Scale shrinks slightly as card approaches target
+            scale = 1.0 - 0.2 * t
+            tmp = pygame.Surface((_ARENA_CW, _ARENA_CH), pygame.SRCALPHA)
+            _draw_card_face(
+                tmp,
+                tmp.get_rect(),
+                anim.card,
+                trump,
+                self._font_sm,
+                self._font_lg,
+            )
+            if scale != 1.0:
+                scaled = pygame.transform.smoothscale(
+                    tmp, (int(_ARENA_CW * scale), int(_ARENA_CH * scale))
+                )
+            else:
+                scaled = tmp
+            self._screen.blit(scaled, scaled.get_rect(center=(int(cx), int(cy))))
+            if raw_t < 1.0:
+                still_flying.append(anim)
+        self._anims = still_flying
+
+    # ------------------------------------------------------------------
     # Game over overlay
     # ------------------------------------------------------------------
 
     def _draw_game_over(self) -> None:
-        self._screen.fill(_BG_DARK)
+        if self._bg is not None:
+            self._bg.draw(self._screen, self._t)
+        else:
+            self._screen.fill(_BG_DARK)
         state = self._ctrl.state
         sorted_p = sorted(state.players, key=lambda p: p.score, reverse=True)
 
@@ -1415,6 +1799,7 @@ class TacticalUI:
 
         hint = self._font_sm.render("Press ESC or click to quit", True, _TEXT_MUT)
         self._screen.blit(hint, hint.get_rect(centerx=_W // 2, y=_H - 50))
+        self._screen.blit(self._scanlines, (0, 0))
 
     # ------------------------------------------------------------------
     # Trick-pause overlay
@@ -1519,6 +1904,52 @@ class TacticalUI:
         return [
             pygame.Rect(x0 + i * (_HAND_CW + _CARD_GAP), y, _HAND_CW, _HAND_CH) for i in range(5)
         ]
+
+    def _hand_slot_centre(self, card: Card) -> tuple[float, float] | None:
+        """Return the screen centre of the hand slot containing card, or None if not found."""
+        rects = self._hand_card_rects(5)
+        for slot_card, rect in zip(self._hand_slots, rects):
+            if slot_card == card:
+                return (float(rect.centerx), float(rect.centery))
+        return None
+
+    def _arena_slot_centre(self, player_idx: int, n_players: int) -> tuple[float, float]:
+        """Return the pixel centre of a player's arena slot (mirrors _draw_arena layout)."""
+        slot_area_h = _ARENA_H - 30
+        slot_area_y = _ARENA_Y + 30
+        cols, rows, slot_positions = _ARENA_CONFIG.get(n_players, _ARENA_CONFIG[4])
+        col_w = _CTR_W // cols
+        row_h = slot_area_h // rows
+        cp = slot_positions[player_idx % len(slot_positions)]
+        cx = _CTR_X + cp[0] * col_w + col_w // 2
+        cy = slot_area_y + cp[1] * row_h + row_h // 2
+        return (float(cx), float(cy))
+
+    def _launch_anim(
+        self,
+        card: Card,
+        player_idx: int,
+        start: tuple[float, float],
+        state: GameState,
+    ) -> None:
+        """Launch a bezier card-flight animation from start to the player's arena slot."""
+        if state.trump_suit is None:
+            return
+        n = len(state.players)
+        p0 = start
+        p2 = self._arena_slot_centre(player_idx, n)
+        mid = ((p0[0] + p2[0]) / 2, (p0[1] + p2[1]) / 2)
+        p1 = (mid[0], mid[1] - 280)
+        self._anims.append(
+            _CardAnim(
+                card=card,
+                p0=p0,
+                p1=p1,
+                p2=p2,
+                start_ms=pygame.time.get_ticks(),
+                trump=state.trump_suit,
+            )
+        )
 
 
 # ---------------------------------------------------------------------------
